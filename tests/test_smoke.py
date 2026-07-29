@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import app
 from assistant.agent import runtime
 from assistant.infrastructure import settings
+from assistant.tools import docs
 
 
 class AssistantSmokeTests(unittest.TestCase):
@@ -24,6 +25,12 @@ class AssistantSmokeTests(unittest.TestCase):
         calls = runtime._dsml_tool_calls(content)
         self.assertEqual(calls[0]["name"], "web_search")
         self.assertEqual(calls[0]["args"]["query"], "NLP news")
+
+    def test_paper_lookup_does_not_require_an_optional_skill_file(self) -> None:
+        response = MagicMock()
+        response.json.return_value = {"message": {"items": [{"title": ["Example paper"], "URL": "https://doi.org/example"}]}}
+        with patch.object(docs.http, "get", return_value=response):
+            self.assertEqual(docs.academic_paper_lookup("example")[0]["title"], "Example paper")
 
     def test_runtime_validation_reports_missing_configuration(self) -> None:
         with (

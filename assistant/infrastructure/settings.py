@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 
 # Keep module imports side-effect free with respect to credentials.  This makes
 # static checks, tests and CLI diagnostics possible on a fresh checkout while

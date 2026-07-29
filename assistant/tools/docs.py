@@ -95,8 +95,6 @@ def installed_skill(name: str) -> str:
 
 def huggingface_paper_lookup(query: str) -> list[dict[str, str]]:
     """Look up a paper by arXiv ID using Hugging Face's public API."""
-    if not installed_skill("huggingface-papers"):
-        return []
     match = re.search(r"\b(\d{4}\.\d{4,5}(?:v\d+)?)\b", query)
     if not match:
         return []
@@ -115,8 +113,6 @@ def huggingface_paper_lookup(query: str) -> list[dict[str, str]]:
 
 def academic_paper_lookup(query: str) -> list[dict[str, str]]:
     """Look up primary scholarly metadata through Crossref, with HF ID support."""
-    if not installed_skill("paper-lookup"):
-        return []
     hf_results = huggingface_paper_lookup(query)
     if hf_results:
         return hf_results
