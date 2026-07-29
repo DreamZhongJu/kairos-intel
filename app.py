@@ -30,6 +30,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from openai import OpenAI
 from assistant.channels import feishu as feishu_channel
 from oauth_server import authorization_link, init_oauth, start_oauth_server, user_access_token
+from assistant.tools import archive as archive_tools
 from assistant.infrastructure.settings import (
     APP_ID,
     APP_SECRET,
@@ -1577,6 +1578,15 @@ def native_memory_search(query: str) -> str:
 def native_preview_cloud_archive(limit: int = 80) -> str:
     """Scan existing Feishu cloud documents and make a non-destructive archive preview. Use only when the user explicitly asks to scan or archive older cloud documents."""
     return create_archive_preview(limit)
+
+
+knowledge_space_target = archive_tools.knowledge_space_target
+list_cloud_documents = archive_tools.list_cloud_documents
+classify_archive_documents = archive_tools.classify_archive_documents
+create_archive_preview = archive_tools.create_archive_preview
+execute_archive_batch = archive_tools.execute_archive_batch
+native_archive_to_knowledge_base = archive_tools.native_archive_to_knowledge_base
+native_preview_cloud_archive = archive_tools.native_preview_cloud_archive
 
 
 NATIVE_TOOLS = [
