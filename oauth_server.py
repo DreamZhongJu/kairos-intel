@@ -7,24 +7,30 @@ import secrets
 import sqlite3
 import threading
 import time
-from pathlib import Path
 from urllib.parse import urlencode
 
 import requests
 from cryptography.fernet import Fernet
 from flask import Flask, request
 
-from assistant.infrastructure.settings import APP_ID, APP_SECRET, DATA_DIR, DB_PATH
+from assistant.infrastructure.settings import APP_ID, APP_SECRET, DB_PATH
 
 PUBLIC_URL = os.getenv("OAUTH_PUBLIC_URL", "").rstrip("/")
-FERNET = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
-SCOPES = " ".join([
+SCOPES = " ".join([  # noqa: FLY002 - a readable permission list is safer to review.
     "offline_access", "wiki:wiki:readonly", "wiki:wiki", "docx:document:readonly", "docx:document", "search:docs:read", "drive:drive",
     "calendar:calendar:readonly", "calendar:calendar",
 ])
 
 app = Flask(__name__)
 _refresh_lock = threading.Lock()
+
+
+def _fernet() -> Fernet:
+    """Build the cipher lazily so importing the app needs no production secret."""
+    key = os.getenv("TOKEN_ENCRYPTION_KEY", "")
+    if not key:
+        raise RuntimeError("TOKEN_ENCRYPTION_KEY is required for Feishu OAuth token storage.")
+    return Fernet(key.encode())
 
 
 def init_oauth() -> None:
@@ -53,7 +59,7 @@ def _token_data(payload: dict) -> dict:
 
 
 def _save_token_payload(payload: dict) -> None:
-    encrypted = FERNET.encrypt(repr(payload).encode())
+    encrypted = _fernet().encrypt(repr(payload).encode())
     with sqlite3.connect(DB_PATH) as con:
         con.execute("INSERT OR REPLACE INTO user_tokens(id, token, updated_at) VALUES(1, ?, ?)", (encrypted, int(time.time())))
 
@@ -63,7 +69,7 @@ def _load_token_payload() -> tuple[dict, int]:
         row = con.execute("SELECT token, updated_at FROM user_tokens WHERE id=1").fetchone()
     if not row:
         raise RuntimeError("尚未完成个人飞书授权，请先发送“授权飞书”。")
-    return ast.literal_eval(FERNET.decrypt(row[0]).decode()), int(row[1])
+    return ast.literal_eval(_fernet().decrypt(row[0]).decode()), int(row[1])
 
 
 @app.get("/healthz")

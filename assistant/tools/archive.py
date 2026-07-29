@@ -7,8 +7,10 @@ import logging
 import re
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+
+from langchain_core.tools import tool
 
 from assistant.channels.feishu import user_feishu_request
 from assistant.infrastructure.settings import DB_PATH, KNOWLEDGE_SPACES_PATH
@@ -87,7 +89,6 @@ def classify_archive_documents(documents: list[dict[str, str]]) -> list[dict[str
     """Ask the model to classify titles, but keep an explicit pending bucket."""
     if not documents:
         return []
-    choices = "科研、技术雷达、情报与观察、个人工作台、待确认"
     plan: list[dict[str, str]] = []
     for item in documents:
         plan.append({**item, "target": "待确认", "reason": "标题信息不足"})
@@ -103,7 +104,7 @@ def create_archive_preview(limit: int = 80) -> str:
     with sqlite3.connect(DB_PATH) as con:
         con.execute(
             "INSERT OR REPLACE INTO archive_batches VALUES (?, ?, ?)",
-            (code, json.dumps(plan, ensure_ascii=False), datetime.now(timezone.utc).isoformat()),
+            (code, json.dumps(plan, ensure_ascii=False), datetime.now(UTC).isoformat()),
         )
     groups: dict[str, list[dict[str, str]]] = {name: [] for name in ("科研", "技术雷达", "情报与观察", "个人工作台", "待确认")}
     for item in plan:
@@ -169,6 +170,7 @@ def execute_archive_batch(code: str) -> str:
     return result
 
 
+@tool("archive_to_knowledge_base")
 def native_archive_to_knowledge_base(target: str, title: str, content: str) -> str:
     """Create a note directly under one configured Feishu knowledge base after an explicit user request."""
     selected = knowledge_space_target(target)
@@ -198,7 +200,7 @@ def native_archive_to_knowledge_base(target: str, title: str, content: str) -> s
     return f"已归档到{label}：https://my.feishu.cn/wiki/{node_token or parent_token}"
 
 
+@tool("preview_cloud_archive")
 def native_preview_cloud_archive(limit: int = 80) -> str:
     """Scan existing Feishu cloud documents and make a non-destructive archive preview."""
     return create_archive_preview(limit)
-

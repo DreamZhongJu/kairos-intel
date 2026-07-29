@@ -6,8 +6,7 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime, timezone
-from html import unescape
+from datetime import UTC, datetime
 from typing import Any
 
 import lark_oapi as lark
@@ -33,7 +32,7 @@ def event_to_dict(data: Any) -> dict[str, Any]:
 
 def tenant_token() -> str:
     global _tenant_token, _token_expiry
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     with _token_lock:
         if _tenant_token and now < _token_expiry:
             return _tenant_token

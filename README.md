@@ -27,3 +27,23 @@
 ## 相关项目
 
 每日情报日报独立维护于另一个项目，以便将飞书交互与定时信息聚合解耦。
+
+## 本地开发与校验
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+未配置密钥时，模块仍可被导入并运行测试；执行 `python app.py` 才会校验
+`LARK_APP_ID`、`LARK_APP_SECRET`、`DEEPSEEK_API_KEY` 与 `TOKEN_ENCRYPTION_KEY`。
+
+## 代码结构
+
+- `app.py`：飞书事件入口、显式确认流程与服务装配。
+- `assistant/agent/`：LangGraph 工具调用图与模型消息兼容层。
+- `assistant/tools/`：搜索、网页、论文、云文档、知识库、附件、日程和归档工具。
+- `assistant/channels/`：飞书消息与 API 传输。
+- `assistant/memory/`：SQLite 长期记忆与 Claude-Mem 适配。
+- `tests/`：无需真实密钥或联网的启动级冒烟测试。

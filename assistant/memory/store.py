@@ -8,7 +8,7 @@ import logging
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TypedDict
 
 import requests
@@ -45,7 +45,7 @@ def claude_mem_scope(owner_id: str) -> str:
 
 def memory_safe_text(text: str, limit: int = 2800) -> str:
     """Keep memory useful while excluding credentials, OAuth links and raw files."""
-    value = re.sub(r"https?://[^\s]*(?:[?&](?:token|code|access_token|refresh_token|app_secret|api_key)=)[^\s]*", "[redacted]", text, flags=re.I)
+    value = re.sub(r"https?://[^\s]*(?:[?&](?:token|code|access_token|refresh_token|app_secret|api_key)=)[^\s]*", "[redacted]", text, flags=re.IGNORECASE)
     value = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[redacted]", value)
     value = re.sub(r"(?i)\b(?:api[_ -]?key|app[_ -]?secret|password|password|token|授权码|口令)\s*[:：]\s*\S+", "[redacted]", value)
     value = re.sub(r"\s+", " ", value).strip()
@@ -147,7 +147,7 @@ def claim_message(message_id: str) -> bool:
         try:
             con.execute(
                 "INSERT INTO handled_messages(message_id, handled_at) VALUES (?, ?)",
-                (message_id, datetime.now(timezone.utc).isoformat()),
+                (message_id, datetime.now(UTC).isoformat()),
             )
             con.execute("DELETE FROM handled_messages WHERE handled_at < datetime('now', '-3 days')")
             return True
@@ -232,7 +232,7 @@ def memory_extract_node(state: LongTermMemoryState) -> dict[str, Any]:
         LOG.warning("long-term memory extraction unavailable: %s", exc)
         return {}
     memories = payload.get("memories", []) if isinstance(payload, dict) else []
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     safe_categories = {"偏好", "研究", "项目", "习惯", "决定"}
     with sqlite3.connect(DB_PATH) as con:
         for memory in memories[:5]:
@@ -244,7 +244,7 @@ def memory_extract_node(state: LongTermMemoryState) -> dict[str, Any]:
                 continue
             if re.search(r"(?:sk-|api[_ -]?key|密码|口令|token|授权码)", content, re.IGNORECASE):
                 continue
-            memory_id = hashlib.sha256(f"{state['owner_id']}:{category}:{content}".encode("utf-8")).hexdigest()
+            memory_id = hashlib.sha256(f"{state['owner_id']}:{category}:{content}".encode()).hexdigest()
             con.execute(
                 "INSERT INTO long_term_memories(owner_id,memory_id,category,content,source_message_id,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?) ON CONFLICT(memory_id) DO UPDATE SET updated_at=excluded.updated_at, source_message_id=excluded.source_message_id",

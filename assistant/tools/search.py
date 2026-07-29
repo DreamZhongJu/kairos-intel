@@ -11,6 +11,7 @@ from urllib.parse import quote_plus, urlsplit
 
 import requests
 from duckduckgo_search import DDGS
+from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from openai import OpenAI
 
@@ -266,13 +267,17 @@ def build_graph() -> Any:
     return graph.compile()
 
 
+@tool("web_search")
 def native_web_search(query: str) -> str:
+    """Search current public web and news sources."""
     import json
 
     return json.dumps(web_search(query), ensure_ascii=False, default=str)[:24000]
 
 
+@tool("read_webpage")
 def native_read_webpage(url: str) -> str:
+    """Read visible text from a public webpage shared in the conversation."""
     import json
 
     return json.dumps(read_public_webpage(url), ensure_ascii=False, default=str)[:24000]
