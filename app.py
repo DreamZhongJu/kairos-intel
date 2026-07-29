@@ -28,6 +28,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from openai import OpenAI
+from assistant.channels import feishu as feishu_channel
 from oauth_server import authorization_link, init_oauth, start_oauth_server, user_access_token
 from assistant.infrastructure.settings import (
     APP_ID,
@@ -332,6 +333,18 @@ MEMORY_GRAPH = memory_store.MEMORY_GRAPH
 _memory_lock = memory_store.MEMORY_LOCK
 _memory_checkpointer = memory_store._memory_checkpointer
 
+event_to_dict = feishu_channel.event_to_dict
+tenant_token = feishu_channel.tenant_token
+feishu_request = feishu_channel.feishu_request
+user_feishu_request = feishu_channel.user_feishu_request
+reply = feishu_channel.reply
+message_text = feishu_channel.message_text
+clean_question = feishu_channel.clean_question
+recent_chat = feishu_channel.recent_chat
+latest_file_in_chat = feishu_channel.latest_file_in_chat
+urls_in_message_content = feishu_channel.urls_in_message_content
+latest_reference_in_chat = feishu_channel.latest_reference_in_chat
+
 
 def tenant_token() -> str:
     global _tenant_token, _token_expiry
@@ -466,6 +479,19 @@ def latest_reference_in_chat(chat_id: str) -> dict[str, str] | None:
     except Exception as exc:
         LOG.warning("latest reference lookup unavailable: %s", exc)
     return None
+
+
+event_to_dict = feishu_channel.event_to_dict
+tenant_token = feishu_channel.tenant_token
+feishu_request = feishu_channel.feishu_request
+user_feishu_request = feishu_channel.user_feishu_request
+reply = feishu_channel.reply
+message_text = feishu_channel.message_text
+clean_question = feishu_channel.clean_question
+recent_chat = feishu_channel.recent_chat
+latest_file_in_chat = feishu_channel.latest_file_in_chat
+urls_in_message_content = feishu_channel.urls_in_message_content
+latest_reference_in_chat = feishu_channel.latest_reference_in_chat
 
 
 def web_search(query: str) -> list[dict[str, str]]:
