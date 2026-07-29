@@ -44,6 +44,21 @@ from assistant.infrastructure.settings import (
     REPORT_DIR,
     SKILLS_DIR,
 )
+from assistant.memory.store import (
+    MEMORY_GRAPH,
+    MEMORY_LOCK as _memory_lock,
+    _memory_checkpointer,
+    claude_mem_search,
+    claim_message,
+    combined_memory_context,
+    forget_memories,
+    init_db,
+    init_memory_runtime,
+    memory_owner_id,
+    persist_memory_async,
+    relevant_memories,
+)
+from assistant.memory import store as memory_store
 
 
 logging.basicConfig(
@@ -298,6 +313,24 @@ def claim_message(message_id: str) -> bool:
             return True
         except sqlite3.IntegrityError:
             return False
+
+
+claude_mem_scope = memory_store.claude_mem_scope
+memory_safe_text = memory_store.memory_safe_text
+claude_mem_search = memory_store.claude_mem_search
+claude_mem_record = memory_store.claude_mem_record
+init_db = memory_store.init_db
+memory_owner_id = memory_store.memory_owner_id
+relevant_memories = memory_store.relevant_memories
+combined_memory_context = memory_store.combined_memory_context
+init_memory_runtime = memory_store.init_memory_runtime
+remember_async = memory_store.remember_async
+persist_memory_async = memory_store.persist_memory_async
+forget_memories = memory_store.forget_memories
+claim_message = memory_store.claim_message
+MEMORY_GRAPH = memory_store.MEMORY_GRAPH
+_memory_lock = memory_store.MEMORY_LOCK
+_memory_checkpointer = memory_store._memory_checkpointer
 
 
 def tenant_token() -> str:
