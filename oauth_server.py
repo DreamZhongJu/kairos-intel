@@ -14,10 +14,8 @@ import requests
 from cryptography.fernet import Fernet
 from flask import Flask, request
 
-APP_ID = os.environ["LARK_APP_ID"]
-APP_SECRET = os.environ["LARK_APP_SECRET"]
-DATA_DIR = Path("/app/data")
-DB_PATH = DATA_DIR / "assistant.db"
+from assistant.infrastructure.settings import APP_ID, APP_SECRET, DATA_DIR, DB_PATH
+
 PUBLIC_URL = os.getenv("OAUTH_PUBLIC_URL", "").rstrip("/")
 FERNET = Fernet(os.environ["TOKEN_ENCRYPTION_KEY"].encode())
 SCOPES = " ".join([

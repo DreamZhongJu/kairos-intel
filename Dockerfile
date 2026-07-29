@@ -12,6 +12,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     ALL_PROXY=${ALL_PROXY}
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+COPY assistant ./assistant
 COPY app.py ./
 COPY oauth_server.py ./
 COPY skills ./skills

@@ -29,6 +29,21 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from openai import OpenAI
 from oauth_server import authorization_link, init_oauth, start_oauth_server, user_access_token
+from assistant.infrastructure.settings import (
+    APP_ID,
+    APP_SECRET,
+    CLAUDE_MEM_PLATFORM,
+    CLAUDE_MEM_URL,
+    DATA_DIR,
+    DB_PATH,
+    DEEPSEEK_KEY,
+    KNOWLEDGE_SPACES_PATH,
+    MEMORY_LIMIT,
+    MODEL,
+    RECENT_LIMIT,
+    REPORT_DIR,
+    SKILLS_DIR,
+)
 
 
 logging.basicConfig(
@@ -36,23 +51,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 LOG = logging.getLogger("feishu-assistant")
-
-APP_ID = os.environ["LARK_APP_ID"]
-APP_SECRET = os.environ["LARK_APP_SECRET"]
-DEEPSEEK_KEY = os.environ["DEEPSEEK_API_KEY"]
-MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-RECENT_LIMIT = max(1, min(int(os.getenv("RECENT_MESSAGE_LIMIT", "30")), 50))
-REPORT_DIR = Path(os.getenv("DAILY_REPORT_DIR", "/reports"))
-SKILLS_DIR = Path(os.getenv("SKILLS_DIR", "/app/skills"))
-DATA_DIR = Path("/app/data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "assistant.db"
-MEMORY_LIMIT = max(3, min(int(os.getenv("LONG_TERM_MEMORY_LIMIT", "8")), 15))
-KNOWLEDGE_SPACES_PATH = Path(os.getenv("KNOWLEDGE_SPACES_PATH", "/app/knowledge_spaces.json"))
-# Claude-Mem is a local-only sidecar.  It is deliberately optional: the
-# existing SQLite memory continues to work while the sidecar is unavailable.
-CLAUDE_MEM_URL = os.getenv("CLAUDE_MEM_URL", "").rstrip("/")
-CLAUDE_MEM_PLATFORM = "feishu"
 
 http = requests.Session()
 http.headers["User-Agent"] = "FeishuResearchAssistant/1.0"
