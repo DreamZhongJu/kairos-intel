@@ -31,6 +31,8 @@ from openai import OpenAI
 from assistant.channels import feishu as feishu_channel
 from oauth_server import authorization_link, init_oauth, start_oauth_server, user_access_token
 from assistant.tools import archive as archive_tools
+from assistant.tools import docs as docs_tools
+from assistant.tools import search as search_tools
 from assistant.infrastructure.settings import (
     APP_ID,
     APP_SECRET,
@@ -1112,6 +1114,33 @@ def build_tool_graph() -> Any:
     return graph.compile()
 
 
+web_search = search_tools.web_search
+read_public_webpage = search_tools.read_public_webpage
+latest_report = search_tools.latest_report
+needs_research = search_tools.needs_research
+extract_search_query = search_tools.extract_search_query
+route_request = search_tools.route_request
+select_route = search_tools.select_route
+research_node = search_tools.research_node
+report_node = search_tools.report_node
+compose_node = search_tools.compose_node
+build_graph = search_tools.build_graph
+
+document_summary = docs_tools.document_summary
+search_and_summarize_document = docs_tools.search_and_summarize_document
+installed_skill = docs_tools.installed_skill
+huggingface_paper_lookup = docs_tools.huggingface_paper_lookup
+academic_paper_lookup = docs_tools.academic_paper_lookup
+knowledge_context = docs_tools.knowledge_context
+configured_wiki_context = docs_tools.configured_wiki_context
+native_paper_lookup = docs_tools.native_paper_lookup
+native_huggingface_papers = docs_tools.native_huggingface_papers
+native_knowledge_search = docs_tools.native_knowledge_search
+native_daily_report = docs_tools.native_daily_report
+native_knowledge_save = docs_tools.native_knowledge_save
+native_save_cloud_document = docs_tools.native_save_cloud_document
+
+
 TOOL_GRAPH = build_tool_graph()
 
 
@@ -1587,6 +1616,16 @@ create_archive_preview = archive_tools.create_archive_preview
 execute_archive_batch = archive_tools.execute_archive_batch
 native_archive_to_knowledge_base = archive_tools.native_archive_to_knowledge_base
 native_preview_cloud_archive = archive_tools.native_preview_cloud_archive
+
+native_web_search = search_tools.native_web_search
+native_read_webpage = search_tools.native_read_webpage
+
+native_paper_lookup = docs_tools.native_paper_lookup
+native_huggingface_papers = docs_tools.native_huggingface_papers
+native_knowledge_search = docs_tools.native_knowledge_search
+native_daily_report = docs_tools.native_daily_report
+native_knowledge_save = docs_tools.native_knowledge_save
+native_save_cloud_document = docs_tools.native_save_cloud_document
 
 
 NATIVE_TOOLS = [
