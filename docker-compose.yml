@@ -25,6 +25,8 @@ services:
       - host.docker.internal:host-gateway
     volumes:
       - ./data:/app/data
+      - ./data/agent-reach:/root/.agent-reach
+      - ./data/mcporter:/root/.config/mcporter
       - /srv/games/daily-intel/horizon/data/summaries:/reports:ro
   cloudflared:
     image: cloudflare/cloudflared:latest
