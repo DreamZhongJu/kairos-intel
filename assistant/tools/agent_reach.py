@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from typing import Any
 
+import requests
 from langchain_core.tools import tool
 
 
@@ -64,7 +65,7 @@ def github_research(query: str, limit: int = 5) -> str:
     if not query:
         return json.dumps({"error": "query is required"}, ensure_ascii=False)
     limit = max(1, min(int(limit), 10))
-    return _run(
+    cli_result = _run(
         [
             "gh",
             "search",
@@ -77,6 +78,32 @@ def github_research(query: str, limit: int = 5) -> str:
         ],
         timeout=60,
     )
+    # gh CLI requires authentication for this endpoint in some environments.
+    # Retain Agent-Reach's preferred client when it works, but do not turn a
+    # public-information query into a dead end when the user has not logged in.
+    if '"error"' not in cli_result:
+        return cli_result
+    try:
+        response = requests.get(
+            "https://api.github.com/search/repositories",
+            params={"q": query, "sort": "updated", "order": "desc", "per_page": limit},
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "FeishuResearchAssistant/1.0"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        items = [
+            {
+                "name": item.get("full_name"),
+                "description": item.get("description"),
+                "url": item.get("html_url"),
+                "updated_at": item.get("updated_at"),
+                "stars": item.get("stargazers_count"),
+            }
+            for item in response.json().get("items", [])
+        ]
+        return json.dumps(items, ensure_ascii=False)
+    except requests.RequestException:
+        return cli_result
 
 
 @tool("youtube_video_details")
