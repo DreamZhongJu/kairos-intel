@@ -29,6 +29,24 @@ services:
       - ./data/mcporter:/root/.config/mcporter
       - ./data/rdt-cli:/root/.config/rdt-cli
       - /srv/games/daily-intel/horizon/data/summaries:/reports:ro
+  xiaohongshu-mcp:
+    image: xpzouying/xiaohongshu-mcp
+    container_name: xiaohongshu-mcp
+    restart: unless-stopped
+    tty: true
+    environment:
+      TZ: Asia/Shanghai
+      COOKIES_PATH: /app/data/cookies.json
+      HOME: /app/data/home
+      XDG_CONFIG_HOME: /app/data/config
+      XHS_PROXY: http://host.docker.internal:7890
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./data/xiaohongshu:/app/data
+      - ./data/xiaohongshu-images:/app/images
+    ports:
+      - "127.0.0.1:18060:18060"
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate --url http://feishu-assistant:8080
