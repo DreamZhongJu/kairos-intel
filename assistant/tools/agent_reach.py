@@ -8,6 +8,7 @@ shell, so untrusted webpage text cannot become an operating-system command.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from typing import Any
@@ -16,7 +17,7 @@ import requests
 from langchain_core.tools import tool
 
 
-def _run(command: list[str], timeout: int = 45) -> str:
+def _run(command: list[str], timeout: int = 45, env: dict[str, str] | None = None) -> str:
     """Run one installed client and return bounded, display-safe output."""
     if not command or not shutil.which(command[0]):
         return json.dumps({"error": f"{command[0] if command else 'tool'} is not installed"}, ensure_ascii=False)
@@ -30,6 +31,7 @@ def _run(command: list[str], timeout: int = 45) -> str:
             errors="replace",
             timeout=timeout,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return json.dumps({"error": "upstream tool timed out"}, ensure_ascii=False)
@@ -37,6 +39,31 @@ def _run(command: list[str], timeout: int = 45) -> str:
     if result.returncode:
         return json.dumps({"error": "upstream tool failed", "detail": output[:2000]}, ensure_ascii=False)
     return output[:24_000] or json.dumps({"result": "no output"}, ensure_ascii=False)
+
+
+def _agent_reach_env() -> dict[str, str]:
+    """Load only the credentials needed by upstream read-only clients.
+
+    Agent-Reach stores these values in its owner-only configuration file.  They
+    are passed to the child process only and are never returned in tool output.
+    """
+    env = dict(os.environ)
+    try:
+        from agent_reach.config import Config
+
+        config = Config(read_only=True)
+        for config_key, env_key in (
+            ("twitter_auth_token", "TWITTER_AUTH_TOKEN"),
+            ("twitter_ct0", "TWITTER_CT0"),
+        ):
+            value = config.get(config_key)
+            if value:
+                env[env_key] = str(value)
+    except Exception:
+        # Missing credentials are surfaced by the upstream CLI, without
+        # preventing public Agent-Reach functionality.
+        pass
+    return env
 
 
 @tool("agent_reach_health")
@@ -122,3 +149,23 @@ def bilibili_search(query: str) -> str:
     if not query:
         return json.dumps({"error": "query is required"}, ensure_ascii=False)
     return _run(["bili", "search", query, "--type", "video"], timeout=60)
+
+
+@tool("x_search")
+def x_search(query: str, limit: int = 5) -> str:
+    """Search public X posts after the account owner has configured their X session."""
+    query = query.strip()[:300]
+    if not query:
+        return json.dumps({"error": "query is required"}, ensure_ascii=False)
+    limit = max(1, min(int(limit), 10))
+    return _run(["twitter", "search", query, "-n", str(limit)], timeout=75, env=_agent_reach_env())
+
+
+@tool("reddit_search")
+def reddit_search(query: str, limit: int = 5) -> str:
+    """Search Reddit after the account owner has configured a Reddit session."""
+    query = query.strip()[:300]
+    if not query:
+        return json.dumps({"error": "query is required"}, ensure_ascii=False)
+    limit = max(1, min(int(limit), 10))
+    return _run(["rdt", "search", query, "-n", str(limit)], timeout=75, env=_agent_reach_env())
