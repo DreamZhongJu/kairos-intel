@@ -63,6 +63,14 @@ def _agent_reach_env() -> dict[str, str]:
         # Missing credentials are surfaced by the upstream CLI, without
         # preventing public Agent-Reach functionality.
         pass
+    # Node's native fetch ignores proxy environment variables unless an Undici
+    # dispatcher is explicitly set. This preload only configures routing.
+    proxy_preload = "/app/assistant/tools/node_proxy.cjs"
+    if os.path.exists(proxy_preload):
+        existing = env.get("NODE_OPTIONS", "").strip()
+        preload = f"--require {proxy_preload}"
+        if preload not in existing:
+            env["NODE_OPTIONS"] = f"{existing} {preload}".strip()
     return env
 
 
@@ -153,12 +161,25 @@ def bilibili_search(query: str) -> str:
 
 @tool("x_search")
 def x_search(query: str, limit: int = 5) -> str:
-    """Search public X posts after the account owner has configured their X session."""
+    """Search public X posts using the configured session; this tool never posts or modifies X."""
     query = query.strip()[:300]
     if not query:
         return json.dumps({"error": "query is required"}, ensure_ascii=False)
     limit = max(1, min(int(limit), 10))
-    return _run(["twitter", "search", query, "-n", str(limit)], timeout=75, env=_agent_reach_env())
+    env = _agent_reach_env()
+    primary = _run(["twitter", "search", query, "-n", str(limit)], timeout=75, env=env)
+    if '"error"' not in primary:
+        return primary
+
+    # twitter-cli occasionally exposes an outdated endpoint. Bird is the
+    # read-only Agent-Reach fallback, using the same owner-provided cookies.
+    fallback = _run(["bird", "search", query, "-n", str(limit), "--json"], timeout=75, env=env)
+    if '"error"' not in fallback:
+        return fallback
+    return json.dumps(
+        {"error": "X search failed in both read-only clients", "twitter_cli": primary, "bird": fallback},
+        ensure_ascii=False,
+    )
 
 
 @tool("reddit_search")
