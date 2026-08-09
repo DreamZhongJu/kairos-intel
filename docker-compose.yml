@@ -27,6 +27,7 @@ services:
       - ./data:/app/data
       - ./data/agent-reach:/root/.agent-reach
       - ./data/mcporter:/root/.config/mcporter
+      - ./data/rdt-cli:/root/.config/rdt-cli
       - /srv/games/daily-intel/horizon/data/summaries:/reports:ro
   cloudflared:
     image: cloudflare/cloudflared:latest

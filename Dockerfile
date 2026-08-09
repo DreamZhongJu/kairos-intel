@@ -23,6 +23,7 @@ COPY app.py ./
 COPY oauth_server.py ./
 COPY skills ./skills
 COPY deploy/agent-reach-entrypoint.sh /usr/local/bin/agent-reach-entrypoint
-RUN chmod +x /usr/local/bin/agent-reach-entrypoint
+COPY deploy/import_reddit_cookies.py /usr/local/bin/import-reddit-cookies
+RUN chmod +x /usr/local/bin/agent-reach-entrypoint /usr/local/bin/import-reddit-cookies
 
 CMD ["agent-reach-entrypoint"]
