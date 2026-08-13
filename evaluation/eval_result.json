@@ -1,0 +1,319 @@
+{
+  "model": "deepseek-v4-flash",
+  "doc_chunks": 31,
+  "qa": {
+    "cases": 10,
+    "negative_cases": 3,
+    "avg_faithfulness": 1.0,
+    "avg_answer_relevancy": 1.0,
+    "context_hit_at_3": 1.0,
+    "no_hallucination_on_negatives": 1.0,
+    "rows": [
+      {
+        "question": "飞书研究助手可以访问哪些信息来源？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          7,
+          0,
+          5
+        ],
+        "answer": "飞书研究助手可访问联网搜索、网页阅读、论文与研究趋势查询，以及已授权的飞书云文档、知识库和日程，还可使用本地长期记忆。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "助手在什么条件下才会创建或修改飞书云文档？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          0,
+          7,
+          1
+        ],
+        "answer": "助手仅在用户给出明确指令时，才会创建或修改飞书云文档；未得到明确指令时不会进行任何创建、修改或删除操作。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "长期记忆存储在什么地方，如何隔离？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          7,
+          0,
+          1
+        ],
+        "answer": "长期记忆存储在可选的本地 Claude-Mem 服务中。隔离通过提取、去重和范围隔离实现，不保存全部聊天原文，仅保留经提取、去重后的内容。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "Agent 如何决定调用哪些工具？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          5,
+          3,
+          22
+        ],
+        "answer": "Agent 将用户问题、会话摘要、长期记忆和工具定义交给模型，由模型通过原生 tool calling 决定是否调用及调用哪些工具。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "在群聊中如何避免机器人误响应普通聊天？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          0,
+          7,
+          29
+        ],
+        "answer": "根据资料，群聊需要 @ 机器人或使用约定的触发方式，以避免机器人误响应普通聊天。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "单次请求的工具调用有什么约束，防止循环调用？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          4,
+          5,
+          2
+        ],
+        "answer": "单次请求设置最大工具轮数，防止循环调用。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "当所有联网搜索来源都失败时，助手应该怎样回答？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          6,
+          0,
+          5
+        ],
+        "answer": "当所有联网搜索来源都失败时，助手应明确说明“本次未能验证实时信息”，可提供已有知识但必须标注其非实时性。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "写入工具（如归档）失败时的处理策略是什么？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          6,
+          1,
+          5
+        ],
+        "answer": "写入工具失败时不自动无限重试，而是返回目标、失败原因和可安全重试的步骤，确保不重复创建文档或日程。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "批量归档云文档前需要做什么？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          1,
+          7,
+          0
+        ],
+        "answer": "批量归档云文档前，需先确认归档目标并生成预览，得到用户明确指令后再执行；避免未经授权自动归档。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "项目的依赖方向是如何约束的，低层模块可以导入高层模块吗？",
+        "top3_hit": true,
+        "negative": false,
+        "retrieved_indices": [
+          2,
+          29,
+          8
+        ],
+        "answer": "不能。依赖方向只能从上到下（channels → application → agent → tools → infrastructure），低层模块不得导入高层模块。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "飞书研究助手的日均 token 消耗是多少？",
+        "top3_hit": true,
+        "negative": true,
+        "retrieved_indices": [
+          7,
+          0,
+          8
+        ],
+        "answer": "参考资料中未提及飞书研究助手的日均 token 消耗，因此无法回答该问题。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "助手上线以来有多少注册用户？",
+        "top3_hit": true,
+        "negative": true,
+        "retrieved_indices": [
+          0,
+          5,
+          7
+        ],
+        "answer": "资料中未提及注册用户数量，无法回答。",
+        "faithfulness": 1.0,
+        "relevancy": 1.0
+      },
+      {
+        "question": "DeepSeek API 的计费标准是什么？",
+        "top3_hit": true,
+        "negative": true,
+        "retrieved_indices": [
+          7,
+          1,
+          8
+        ],
+        "answer": "根据提供的参考资料，未包含 DeepSeek API 的计费标准，无法回答。",
+        "faithfulness": 1.0,
+        "relevancy": 0.0
+      }
+    ]
+  },
+  "tool_routing": {
+    "cases": 10,
+    "top1_accuracy": 1.0,
+    "top3_accuracy": 1.0,
+    "rows": [
+      {
+        "question": "最近 GitHub 上有什么开源 Agent 框架值得关注？",
+        "expected": [
+          "github_research"
+        ],
+        "picked": [
+          "github_research",
+          "web_search"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"github_research\", \"web_search\"]}"
+      },
+      {
+        "question": "我今天有什么日程安排？",
+        "expected": [
+          "today_schedule"
+        ],
+        "picked": [
+          "today_schedule"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"today_schedule\"]}"
+      },
+      {
+        "question": "把这份总结归档到科研知识库",
+        "expected": [
+          "archive_to_knowledge_base"
+        ],
+        "picked": [
+          "archive_to_knowledge_base"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"archive_to_knowledge_base\"]}"
+      },
+      {
+        "question": "帮我读一下这篇 arXiv 论文的摘要",
+        "expected": [
+          "paper_lookup",
+          "huggingface_papers",
+          "read_webpage"
+        ],
+        "picked": [
+          "paper_lookup",
+          "huggingface_papers"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"paper_lookup\", \"huggingface_papers\"]}"
+      },
+      {
+        "question": "我之前的 RAG 笔记结论是什么？",
+        "expected": [
+          "knowledge_search",
+          "memory_search"
+        ],
+        "picked": [
+          "memory_search"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"memory_search\"]}"
+      },
+      {
+        "question": "搜一下 B 站上关于 LangGraph 的视频",
+        "expected": [
+          "bilibili_search"
+        ],
+        "picked": [
+          "bilibili_search"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"bilibili_search\"]}"
+      },
+      {
+        "question": "X 上最近关于 GRPO 的讨论",
+        "expected": [
+          "x_search"
+        ],
+        "picked": [
+          "x_search"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"x_search\"]}"
+      },
+      {
+        "question": "最新机器翻译研究进展",
+        "expected": [
+          "web_search",
+          "semantic_web_search",
+          "paper_lookup"
+        ],
+        "picked": [
+          "web_search",
+          "semantic_web_search",
+          "paper_lookup"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"web_search\", \"semantic_web_search\", \"paper_lookup\"]}"
+      },
+      {
+        "question": "把这篇文章内容保存为云文档",
+        "expected": [
+          "save_cloud_document"
+        ],
+        "picked": [
+          "save_cloud_document"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"save_cloud_document\"]}"
+      },
+      {
+        "question": "我收藏的 YouTube 视频讲了什么",
+        "expected": [
+          "youtube_video_details"
+        ],
+        "picked": [
+          "youtube_video_details"
+        ],
+        "top1": true,
+        "top3": true,
+        "raw": "{\"tools\": [\"youtube_video_details\"]}"
+      }
+    ]
+  }
+}

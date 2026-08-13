@@ -1,0 +1,33 @@
+{
+  "model": "deepseek-v4-flash",
+  "cases": 1,
+  "avg_relevancy": 1.0,
+  "avg_completeness": 1.0,
+  "rows": [
+    {
+      "id": 1,
+      "created_at": "2026-08-10T23:17:16",
+      "question": "最近机器翻译有什么值得关注的进展？",
+      "tools": [
+        "semantic_web_search",
+        "web_search",
+        "huggingface_papers",
+        "semantic_web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search",
+        "web_search"
+      ],
+      "answer": "老师，我为您梳理了最近机器翻译领域几个值得关注的进展方向： 一、大语言模型与推理能力驱动的翻译成为主线 这个方向是目前最热的。核心变化在于：翻译不再被当作简单的序列生成任务，而是引入了\"先推理、再翻译\"的范式。例如在法学翻译中，研究者让模型先做结构化推理再产出译文，明显提升了术语准确性和长句处理能力。同时，用可验证奖励的强化学习（RLVR）对模型进行后训练也已被证明有效，但近期论文也指出一个有意思的现象：推理痕迹并非总是有益，在术语密集和风格约束强的场景下反而可能造成漂移，说明需要更细粒度的过程级对齐（如PAMT框架）。 二、翻译质量评估正在被LLM重构 MQM（多维质量指标）评估框架借助LL",
+      "relevancy": 1.0,
+      "completeness": 1.0
+    }
+  ]
+}

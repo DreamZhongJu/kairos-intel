@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "name": "exa",
+      "transport": "streamable_http",
+      "url": "https://mcp.exa.ai/mcp",
+      "enabled": false,
+      "note": "Exa 语义搜索（需 EXA_API_KEY）。启用后助手可调用 exa.web_search_exa 等工具。"
+    },
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/79205/Documents"],
+      "enabled": false,
+      "note": "本地文件系统工具（示例路径，按需修改）。启用后助手可读取/整理本地文件。"
+    }
+  ]
+}
