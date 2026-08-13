@@ -12,13 +12,13 @@ from typing import Any
 import lark_oapi as lark
 import requests
 
-from assistant.infrastructure.settings import APP_ID, APP_SECRET, RECENT_LIMIT
+from kairos.infrastructure.settings import APP_ID, APP_SECRET, RECENT_LIMIT
 from oauth_server import user_access_token
 
-LOG = logging.getLogger("feishu-assistant.channels.feishu")
+LOG = logging.getLogger("kairos.channels.feishu")
 
 http = requests.Session()
-http.headers["User-Agent"] = "FeishuResearchAssistant/1.0"
+http.headers["User-Agent"] = "Kairós/1.0"
 
 _token_lock = threading.Lock()
 _tenant_token: str | None = None

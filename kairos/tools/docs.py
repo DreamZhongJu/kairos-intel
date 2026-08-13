@@ -8,17 +8,17 @@ import re
 
 import requests
 from langchain_core.tools import tool
-from openai import OpenAI
 
-from assistant.channels.feishu import user_feishu_request
-from assistant.infrastructure.settings import DEEPSEEK_KEY, KNOWLEDGE_SPACES_PATH, MODEL, SKILLS_DIR
-from assistant.memory.store import _memory_terms
-from assistant.tools.text import plain_text
+from kairos.channels.feishu import user_feishu_request
+from kairos.infrastructure.settings import KNOWLEDGE_SPACES_PATH, SKILLS_DIR
+from kairos.infrastructure.llm import build_client, model_name
+from kairos.memory.store import _memory_terms
+from kairos.tools.text import plain_text
 
-LOG = logging.getLogger("feishu-assistant.tools.docs")
+LOG = logging.getLogger("kairos.tools.docs")
 http = requests.Session()
-http.headers["User-Agent"] = "FeishuResearchAssistant/1.0"
-llm = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+http.headers["User-Agent"] = "Kairós/1.0"
+llm = build_client()
 
 
 def _document_id_from_link(link: str) -> str:
@@ -40,7 +40,7 @@ def _summarize(content: str) -> str:
         "只依据原文，不要编造，不要使用 Markdown。\n\n"
         + content[:18_000]
     )
-    response = llm.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0.2)
+    response = llm.chat.completions.create(model=model_name(), messages=[{"role": "user", "content": prompt}], temperature=0.2)
     return plain_text(response.choices[0].message.content or "文档内容为空。")[:12_000]
 
 
@@ -222,7 +222,7 @@ def native_read_feishu_document(link: str) -> str:
 @tool("daily_report")
 def native_daily_report() -> str:
     """Read the latest generated daily intelligence report."""
-    from assistant.tools.search import latest_report
+    from kairos.tools.search import latest_report
 
     return latest_report()
 

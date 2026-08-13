@@ -10,15 +10,15 @@ from io import BytesIO
 from pathlib import Path
 
 import requests
-from openai import OpenAI
 
-from assistant.channels.feishu import tenant_token, user_feishu_request
-from assistant.infrastructure.settings import DB_PATH, DEEPSEEK_KEY, MODEL
-from assistant.tools.text import plain_text
+from kairos.channels.feishu import tenant_token, user_feishu_request
+from kairos.infrastructure.settings import DB_PATH
+from kairos.infrastructure.llm import build_client, model_name
+from kairos.tools.text import plain_text
 
 http = requests.Session()
-http.headers["User-Agent"] = "FeishuResearchAssistant/1.0"
-llm = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+http.headers["User-Agent"] = "Kairós/1.0"
+llm = build_client()
 
 
 def message_resource(message_id: str, file_key: str) -> bytes:
@@ -70,7 +70,7 @@ def prepare_note(message_id: str, content: str) -> str:
 
     prompt = "用中文纯文本把下面附件整理为研究笔记：主题、核心要点、方法或证据、待办。不要 Markdown。\n\n" + text
     note = plain_text(
-        llm.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0.2).choices[0].message.content
+        llm.chat.completions.create(model=model_name(), messages=[{"role": "user", "content": prompt}], temperature=0.2).choices[0].message.content
         or ""
     )
     code = secrets.token_hex(3).upper()

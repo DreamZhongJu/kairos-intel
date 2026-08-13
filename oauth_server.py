@@ -13,7 +13,7 @@ import requests
 from cryptography.fernet import Fernet
 from flask import Flask, request
 
-from assistant.infrastructure.settings import APP_ID, APP_SECRET, DB_PATH
+from kairos.infrastructure.settings import APP_ID, APP_SECRET, DB_PATH
 
 PUBLIC_URL = os.getenv("OAUTH_PUBLIC_URL", "").rstrip("/")
 SCOPES = " ".join([  # noqa: FLY002 - a readable permission list is safer to review.

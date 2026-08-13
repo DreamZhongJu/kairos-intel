@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
-from assistant.channels.feishu import user_feishu_request
+from kairos.channels.feishu import user_feishu_request
 
 
 @tool("today_schedule")

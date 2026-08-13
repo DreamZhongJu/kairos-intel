@@ -13,19 +13,19 @@ import requests
 from duckduckgo_search import DDGS
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
-from openai import OpenAI
 
-from assistant.infrastructure.settings import DEEPSEEK_KEY, MODEL, REPORT_DIR
-from assistant.tools.text import plain_text
+from kairos.infrastructure.settings import REPORT_DIR
+from kairos.infrastructure.llm import build_client, model_name
+from kairos.tools.text import plain_text
 
-LOG = logging.getLogger("feishu-assistant.tools.search")
+LOG = logging.getLogger("kairos.tools.search")
 
 http = requests.Session()
-http.headers["User-Agent"] = "FeishuResearchAssistant/1.0"
+http.headers["User-Agent"] = "Kairós/1.0"
 direct_http = requests.Session()
 direct_http.trust_env = False
-direct_http.headers["User-Agent"] = "FeishuResearchAssistant/1.0"
-llm = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+direct_http.headers["User-Agent"] = "Kairós/1.0"
+llm = build_client()
 
 
 def _normalize_query(query: str) -> str:
@@ -249,7 +249,7 @@ def compose_node(state: AssistantState) -> dict[str, Any]:
             ),
         },
     ]
-    final = llm.chat.completions.create(model=MODEL, messages=messages, temperature=0.25).choices[0].message.content
+    final = llm.chat.completions.create(model=model_name(), messages=messages, temperature=0.25).choices[0].message.content
     return {"answer": plain_text(final or "暂时无法生成回答。")[:12000]}
 
 

@@ -1,0 +1,25 @@
+{
+  "research_topic": "自然语言处理（NLP）中的机器翻译（Machine Translation）",
+  "social_query": "国际社会 重要事件 科学 商业 气候 灾害 -中国 -中方 -政府 -外交 -治理",
+  "tech_query": "AI software developer tools semiconductors cybersecurity open source -中国 -政府 -治理",
+  "opensource_query": "GitHub release open source AI developer tools framework -中国 -政府",
+  "research_query": "all:\"machine translation\" OR all:\"neural machine translation\"",
+  "max_items_per_section": 5,
+  "company_roster": [
+    "Astera Labs",
+    "Celestial AI",
+    "Groq",
+    "SiFive",
+    "Wiz",
+    "Scale AI",
+    "CoreWeave",
+    "Nscale",
+    "PostHog",
+    "Snyk",
+    "Mistral AI",
+    "Cohere",
+    "Hugging Face",
+    "Lambda",
+    "Cerebras"
+  ]
+}

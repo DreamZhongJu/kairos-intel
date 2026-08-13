@@ -19,7 +19,7 @@ RUN apt-get update \
     && npm install -g mcporter
 RUN pip install --no-cache-dir twitter-cli "git+https://github.com/public-clis/rdt-cli.git@5e4fb3720d5c174e976cd425ccc3b879d52cac66" \
     && npm install -g @steipete/bird
-COPY assistant ./assistant
+COPY kairos ./kairos
 COPY app.py ./
 COPY oauth_server.py ./
 COPY skills ./skills

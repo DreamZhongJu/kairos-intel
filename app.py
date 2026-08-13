@@ -14,8 +14,8 @@ from typing import Any
 
 import lark_oapi as lark
 
-from assistant.agent import runtime as agent_runtime
-from assistant.channels.feishu import (
+from kairos.agent import runtime as agent_runtime
+from kairos.channels.feishu import (
     clean_question,
     event_to_dict,
     latest_file_in_chat,
@@ -25,8 +25,8 @@ from assistant.channels.feishu import (
     reply,
     urls_in_message_content,
 )
-from assistant.infrastructure.settings import APP_ID, APP_SECRET, validate_runtime_settings
-from assistant.memory.store import (
+from kairos.infrastructure.settings import APP_ID, APP_SECRET, validate_runtime_settings
+from kairos.memory.store import (
     claim_message,
     forget_memories,
     init_db,
@@ -34,16 +34,18 @@ from assistant.memory.store import (
     memory_owner_id,
     persist_memory_async,
 )
-from assistant.tools.archive import execute_archive_batch
-from assistant.tools.attachments import create_note, prepare_note
-from assistant.tools.docs import document_summary
+from kairos.observability import metrics as obs
+from kairos.tools.archive import execute_archive_batch
+from kairos.tools.attachments import create_note, prepare_note
+from kairos.tools.docs import document_summary
+from kairos.reports.scheduler import start_scheduler
 from oauth_server import authorization_link, init_oauth, start_oauth_server
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-LOG = logging.getLogger("feishu-assistant")
+LOG = logging.getLogger("kairos")
 
 TOOL_GRAPH: Any | None = agent_runtime.build_graph()
 
@@ -52,9 +54,9 @@ _FILE_REFERENCE_TERMS = ("这个文件", "刚才的文件", "上面的文件", "
 _NOTE_ACTION_TERMS = ("整理", "解读", "总结", "做笔记", "写笔记")
 
 
-def answer(question: str, context: str, owner_id: str) -> str:
+def answer(question: str, context: str, owner_id: str, chat_id: str = "") -> str:
     """Delegate ordinary conversation to the independent LangGraph runtime."""
-    return agent_runtime.answer(TOOL_GRAPH, question, context, owner_id)
+    return agent_runtime.answer(TOOL_GRAPH, question, context, owner_id, chat_id)
 
 
 def _is_file_request(question: str) -> bool:
@@ -116,7 +118,7 @@ def process_event(data: Any) -> None:
                     reference = latest_reference_in_chat(chat_id)
                     if reference and reference.get("kind") == "webpage" and any(term in question for term in _NOTE_ACTION_TERMS):
                         question = f"{question}\n\nThe user is referring to this shared webpage: {reference['url']}"
-                result = answer(question, recent_chat(chat_id), owner_id)
+                result = answer(question, recent_chat(chat_id), owner_id, chat_id)
 
         reply(message_id, result)
         if not _is_forget_memory_request(question):
@@ -144,9 +146,11 @@ def main() -> None:
     validate_runtime_settings()
     init_db()
     init_memory_runtime()
+    obs.init_metrics_table()
     TOOL_GRAPH = agent_runtime.build_graph()
     init_oauth()
     start_oauth_server()
+    start_scheduler()
     handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(on_message).build()
     client = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
     LOG.info("starting Feishu long connection")

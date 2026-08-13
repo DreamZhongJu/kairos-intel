@@ -1,14 +1,14 @@
 [Unit]
-Description=Feishu Research Assistant local Claude-Mem worker
+Description=Kairós local Claude-Mem worker
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/feishu-research-assistant/claude-mem/source
-EnvironmentFile=/srv/feishu-research-assistant/claude-mem/.env
-Environment=HOME=/srv/feishu-research-assistant/claude-mem/data
-Environment=CLAUDE_MEM_DATA_DIR=/srv/feishu-research-assistant/claude-mem/data/.claude-mem
+WorkingDirectory=/srv/kairos/claude-mem/source
+EnvironmentFile=/srv/kairos/claude-mem/.env
+Environment=HOME=/srv/kairos/claude-mem/data
+Environment=CLAUDE_MEM_DATA_DIR=/srv/kairos/claude-mem/data/.claude-mem
 Environment=CLAUDE_MEM_WORKER_HOST=172.17.0.1
 Environment=CLAUDE_MEM_WORKER_PORT=37777
 Environment=CLAUDE_MEM_PROVIDER=openrouter
@@ -18,7 +18,7 @@ Environment=CLAUDE_MEM_CHROMA_ENABLED=false
 Environment=CLAUDE_MEM_CLOUD_SYNC_TOKEN=
 Environment=CLAUDE_MEM_CLOUD_SYNC_USER_ID=
 Environment=NO_PROXY=localhost,127.0.0.1,api.deepseek.com
-ExecStart=/srv/feishu-research-assistant/claude-mem/bun/bin/bun /srv/feishu-research-assistant/claude-mem/source/plugin/scripts/worker-service.cjs --daemon
+ExecStart=/srv/kairos/claude-mem/bun/bin/bun /srv/kairos/claude-mem/source/plugin/scripts/worker-service.cjs --daemon
 Restart=on-failure
 RestartSec=5
 

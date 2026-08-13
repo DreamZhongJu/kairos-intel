@@ -65,7 +65,7 @@ def _agent_reach_env() -> dict[str, str]:
         pass
     # Node's native fetch ignores proxy environment variables unless an Undici
     # dispatcher is explicitly set. This preload only configures routing.
-    proxy_preload = "/app/assistant/tools/node_proxy.cjs"
+    proxy_preload = "/app/kairos/tools/node_proxy.cjs"
     if os.path.exists(proxy_preload):
         existing = env.get("NODE_OPTIONS", "").strip()
         preload = f"--require {proxy_preload}"
@@ -122,7 +122,7 @@ def github_research(query: str, limit: int = 5) -> str:
         response = requests.get(
             "https://api.github.com/search/repositories",
             params={"q": query, "sort": "updated", "order": "desc", "per_page": limit},
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "FeishuResearchAssistant/1.0"},
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Kairós/1.0"},
             timeout=30,
         )
         response.raise_for_status()

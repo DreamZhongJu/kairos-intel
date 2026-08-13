@@ -12,10 +12,10 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from assistant.channels.feishu import user_feishu_request
-from assistant.infrastructure.settings import DB_PATH, KNOWLEDGE_SPACES_PATH
+from kairos.channels.feishu import user_feishu_request
+from kairos.infrastructure.settings import DB_PATH, KNOWLEDGE_SPACES_PATH
 
-LOG = logging.getLogger("feishu-assistant.tools.archive")
+LOG = logging.getLogger("kairos.tools.archive")
 
 
 def knowledge_space_target(name: str) -> tuple[str, str] | None:

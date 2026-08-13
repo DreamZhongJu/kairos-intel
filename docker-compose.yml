@@ -1,5 +1,5 @@
 services:
-  feishu-assistant:
+  kairos:
     build:
       context: .
       network: host
@@ -7,7 +7,7 @@ services:
         HTTP_PROXY: http://127.0.0.1:7890
         HTTPS_PROXY: http://127.0.0.1:7890
         ALL_PROXY: http://127.0.0.1:7890
-    container_name: feishu-assistant
+    container_name: kairos
     restart: unless-stopped
     env_file: .env
     environment:
@@ -28,8 +28,8 @@ services:
       - ./data/agent-reach:/root/.agent-reach
       - ./data/mcporter:/root/.config/mcporter
       - ./data/rdt-cli:/root/.config/rdt-cli
-      - /srv/games/daily-intel/horizon/data/summaries:/reports:ro
+      - ./reports:/reports
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate --url http://feishu-assistant:8080
+    command: tunnel --no-autoupdate --url http://kairos:8080
     restart: unless-stopped

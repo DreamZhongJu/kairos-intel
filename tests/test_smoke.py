@@ -6,14 +6,14 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import app
-from assistant.agent import runtime
-from assistant.infrastructure import settings
-from assistant.tools import docs
+from kairos.agent import runtime
+from kairos.infrastructure import settings
+from kairos.tools import docs
 
 
 class AssistantSmokeTests(unittest.TestCase):
     def test_all_registered_tools_are_langchain_tools(self) -> None:
-        self.assertEqual(len(runtime.NATIVE_TOOLS), 13)
+        self.assertEqual(len(runtime.NATIVE_TOOLS), 20)
         self.assertTrue(all(getattr(tool, "name", "") for tool in runtime.NATIVE_TOOLS))
         self.assertTrue(all(hasattr(tool, "invoke") for tool in runtime.NATIVE_TOOLS))
 
@@ -50,6 +50,7 @@ class AssistantSmokeTests(unittest.TestCase):
             patch.object(app, "init_memory_runtime"),
             patch.object(app, "init_oauth"),
             patch.object(app, "start_oauth_server"),
+            patch.object(app, "start_scheduler"),
             patch.object(app.agent_runtime, "build_graph", return_value=object()),
             patch.object(app.lark.EventDispatcherHandler, "builder", return_value=handler_builder),
             patch.object(app.lark.ws, "Client", return_value=websocket),
