@@ -11,7 +11,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
 
-from kairos.agent.runtime import _extract_sources, _source_footer  # noqa: E402
+from kairos.agent.runtime import (  # noqa: E402
+    _extract_sources,
+    _model_citation_urls,
+    _source_footer,
+    _validated_sources,
+)
 
 
 def _tool_call(name: str, call_id: str, args: dict) -> dict:
@@ -87,6 +92,52 @@ class SourceExtractionTest(unittest.TestCase):
         self.assertEqual(len(sources), 6)
         footer = _source_footer(sources, ["mcp_custom_tool"])
         self.assertIn("mcp_custom_tool", footer)  # unknown tools keep their raw name
+
+
+class ModelCitationValidationTest(unittest.TestCase):
+    def test_citation_block_urls_extracted_and_stripped(self) -> None:
+        content = "调研结论如下。\n\n参考来源：\nhttps://cs.hubu.edu.cn/szdw.htm\nhttps://www.hubu.edu.cn/\n"
+        urls, index = _model_citation_urls(content)
+        self.assertEqual(urls, ["https://cs.hubu.edu.cn/szdw.htm", "https://www.hubu.edu.cn/"])
+        self.assertEqual(index, 2)
+        stripped = "\n".join(content.splitlines()[:index]).strip()
+        self.assertEqual(stripped, "调研结论如下。")
+        self.assertNotIn("参考来源", stripped)
+
+    def test_citation_marker_with_colon_and_prefix(self) -> None:
+        content = "正文。\n——\n📎 参考来源：\n1. https://example.com/a\n"
+        urls, index = _model_citation_urls(content)
+        self.assertEqual(urls, ["https://example.com/a"])
+        self.assertGreater(index, 0)
+
+    def test_only_cited_sources_kept_in_order(self) -> None:
+        sources = [
+            ("原文", "https://example.com/article"),
+            ("列表页", "https://example.com/list"),
+            ("无关仓库", "https://github.com/someone/repo"),
+        ]
+        cited = ["https://github.com/someone/repo", "https://example.com/article"]
+        validated = _validated_sources(sources, cited)
+        # Order follows the real source list, not the citation order.
+        self.assertEqual(
+            validated,
+            [("原文", "https://example.com/article"), ("无关仓库", "https://github.com/someone/repo")],
+        )
+
+    def test_hallucinated_citation_filtered_out(self) -> None:
+        sources = [("原文", "https://example.com/article")]
+        cited = ["https://example.com/article", "https://not-in-tool-output.com/fake"]
+        validated = _validated_sources(sources, cited)
+        self.assertEqual(validated, [("原文", "https://example.com/article")])
+
+    def test_empty_citation_means_no_validation(self) -> None:
+        sources = [("A", "https://example.com/a"), ("B", "https://example.com/b")]
+        self.assertEqual(_validated_sources(sources, []), sources)
+
+    def test_no_citation_block_in_answer(self) -> None:
+        urls, index = _model_citation_urls("没有检索依据的普通回答。")
+        self.assertEqual(urls, [])
+        self.assertEqual(index, -1)
 
 
 if __name__ == "__main__":
