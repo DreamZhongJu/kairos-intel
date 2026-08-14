@@ -370,19 +370,36 @@ Additional non-negotiable rules:
 
 
 def send_feishu(markdown: str, report_date: str) -> None:
-    webhook = os.environ["FEISHU_WEBHOOK_URL"]
-    payload = {
-        "msg_type": "interactive",
-        "card": {
-            "schema": "2.0",
-            "config": {"wide_screen_mode": True},
-            "header": {"title": {"tag": "plain_text", "content": f"每日情报日报｜{report_date}"}, "template": "blue"},
-            "body": {"elements": [{"tag": "markdown", "content": markdown}]},
-        },
+    card = {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": f"每日情报日报｜{report_date}"}, "template": "blue"},
+        "body": {"elements": [{"tag": "markdown", "content": markdown}]},
     }
-    response = httpx.post(webhook, json=payload, timeout=30)
-    response.raise_for_status()
-    print(f"FEISHU_SENT status={response.status_code}")
+    target_chat = os.getenv("FEISHU_REPORT_CHAT_ID", "").strip()
+    if target_chat:
+        # Preferred transport: the assistant's own Feishu bot (tenant token),
+        # unified with the interactive channel used by the brain.
+        from kairos.channels.feishu import feishu_request
+
+        feishu_request(
+            "POST",
+            "/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            json={
+                "receive_id": target_chat,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+            },
+        )
+        print("FEISHU_SENT via=brain_channel")
+    else:
+        # Backward-compatible fallback: custom-bot webhook.
+        webhook = os.environ["FEISHU_WEBHOOK_URL"]
+        payload = {"msg_type": "interactive", "card": card}
+        response = httpx.post(webhook, json=payload, timeout=30)
+        response.raise_for_status()
+        print(f"FEISHU_SENT via=webhook status={response.status_code}")
 
 
 def send_email(markdown: str, report_date: str) -> None:
