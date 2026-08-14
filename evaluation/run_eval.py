@@ -136,7 +136,7 @@ SYSTEM = "你是严谨的评估助手。只输出 JSON，不要输出其他内�
 
 def generate_answer(client: OpenAI, model: str, question: str, context: str) -> str:
     messages = [
-        {"role": "system", "content": "你是飞书研究助手，基于给定的参考资料用中文回答用户问题。只依据资料内容，不要编造；资料不足时明确说明。回答控制在 120 字以内。"},
+        {"role": "system", "content": "你是 Kairós，基于给定的参考资料用中文回答用户问题。只依据资料内容，不要编造；资料不足时明确说明。回答控制在 120 字以内。"},
         {"role": "user", "content": f"参考资料：\n{context}\n\n问题：{question}\n\n请回答："},
     ]
     for _ in range(2):
@@ -173,7 +173,7 @@ def judge_answer(client: OpenAI, model: str, question: str, context: str, answer
 
 QA_CASES = [
     {
-        "question": "飞书研究助手可以访问哪些信息来源？",
+        "question": "Kairós 可以访问哪些信息来源？",
         "anchors": ["公开网络", "论文", "云文档", "知识库", "日程"],
     },
     {
@@ -213,7 +213,7 @@ QA_CASES = [
         "anchors": ["依赖方向", "不能", "低层"],
     },
     {
-        "question": "飞书研究助手的日均 token 消耗是多少？",
+        "question": "Kairós 的日均 token 消耗是多少？",
         "anchors": [],
         "negative": True,
     },
@@ -347,7 +347,7 @@ def main() -> int:
     (out_dir / "eval_result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     md = [
-        "# 飞书研究助手 · 离线评测报告",
+        "# Kairós · 离线评测报告",
         "",
         f"- 评测模型：`{model}`",
         f"- 知识库语料：项目文档分块，共 {len(chunks)} 块",

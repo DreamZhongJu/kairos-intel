@@ -10,7 +10,7 @@
     "no_hallucination_on_negatives": 1.0,
     "rows": [
       {
-        "question": "飞书研究助手可以访问哪些信息来源？",
+        "question": "Kairós 可以访问哪些信息来源？",
         "top3_hit": true,
         "negative": false,
         "retrieved_indices": [
@@ -18,7 +18,7 @@
           0,
           5
         ],
-        "answer": "飞书研究助手可访问联网搜索、网页阅读、论文与研究趋势查询，以及已授权的飞书云文档、知识库和日程，还可使用本地长期记忆。",
+        "answer": "Kairós 可访问联网搜索、网页阅读、论文与研究趋势查询，以及已授权的飞书云文档、知识库和日程，还可使用本地长期记忆。",
         "faithfulness": 1.0,
         "relevancy": 1.0
       },
@@ -140,7 +140,7 @@
         "relevancy": 1.0
       },
       {
-        "question": "飞书研究助手的日均 token 消耗是多少？",
+        "question": "Kairós 的日均 token 消耗是多少？",
         "top3_hit": true,
         "negative": true,
         "retrieved_indices": [
@@ -148,7 +148,7 @@
           0,
           8
         ],
-        "answer": "参考资料中未提及飞书研究助手的日均 token 消耗，因此无法回答该问题。",
+        "answer": "参考资料中未提及 Kairós 的日均 token 消耗，因此无法回答该问题。",
         "faithfulness": 1.0,
         "relevancy": 1.0
       },

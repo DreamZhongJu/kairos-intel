@@ -35,7 +35,7 @@ class MemoryGovernanceTest(unittest.TestCase):
             "msg-1",
             [
                 {"op": "add", "category": "偏好", "is_core": True, "content": "研究方向是知识图谱增强的RAG"},
-                {"op": "add", "category": "项目", "is_core": False, "content": "正在开发飞书研究助手"},
+                {"op": "add", "category": "项目", "is_core": False, "content": "正在开发 Kairós"},
                 {"op": "noop", "content": ""},
             ],
         )

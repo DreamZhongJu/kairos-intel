@@ -49,7 +49,7 @@ LAYOUT = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>飞书研究助手 | 面板</title>
+<title>Kairós | 面板</title>
 <style>
 :root { --accent:#1F5A8A; --bg:#f5f6f8; --card:#fff; --text:#222; --muted:#666; --ok:#1a7f37; --err:#c62828; --border:#e3e6ea; }
 * { box-sizing:border-box; }
@@ -90,7 +90,7 @@ a { color:var(--accent); }
 </head>
 <body>
 <nav>
-  <span class="brand">飞书研究助手</span>
+  <span class="brand">Kairós</span>
   <a href="/" class="active">仪表盘</a>
   <a href="/logs">请求日志</a>
   <a href="/memories">记忆</a>
