@@ -51,6 +51,120 @@ LOG = logging.getLogger("kairos.agent")
 llm = build_client_optional()
 _tool_context = threading.local()
 
+# --- Verifiable source citation -------------------------------------------
+# Sources are extracted from the actual tool-call chain, never from the LLM's
+# own claims: search results carry their URLs, read-type tools carry the URL
+# they were asked to read, and plain-text outputs fall back to URL scanning.
+_SOURCE_URL_RE = re.compile(r"https?://[^\s\"'<>，。；、（）【】「」『』]+")
+_SOURCE_LIMIT = 6
+_PATH_LIMIT = 10
+
+_TOOL_LABELS = {
+    "web_search": "联网搜索",
+    "semantic_web_search": "语义搜索",
+    "read_webpage": "阅读网页",
+    "paper_lookup": "论文检索",
+    "huggingface_papers": "HF 论文",
+    "github_research": "GitHub 检索",
+    "knowledge_search": "知识库检索",
+    "read_feishu_document": "阅读飞书文档",
+    "memory_search": "记忆检索",
+    "daily_report": "查阅日报",
+    "today_schedule": "日程查询",
+    "x_search": "X 搜索",
+    "reddit_search": "Reddit 搜索",
+    "bilibili_search": "B 站搜索",
+    "youtube_video_details": "YouTube 视频",
+    "knowledge_save": "知识库归档",
+    "save_cloud_document": "创建云文档",
+    "archive_to_knowledge_base": "归档知识库",
+    "preview_cloud_archive": "归档预览",
+    "agent_reach_health": "工具健康检查",
+}
+
+_READ_TOOLS = {"read_webpage", "read_feishu_document"}
+
+
+def _walk_urls(value: Any, out: list[tuple[str, str]]) -> None:
+    """Collect (title, url) pairs from JSON tool payloads, recursively."""
+    if isinstance(value, dict):
+        url = value.get("url") or value.get("link") or value.get("href") or value.get("html_url")
+        if isinstance(url, str) and url.startswith("http"):
+            title = value.get("title")
+            label = str(title).strip()[:80] if isinstance(title, str) and title.strip() else ""
+            out.append((label, url))
+        for child in value.values():
+            _walk_urls(child, out)
+    elif isinstance(value, list):
+        for child in value:
+            _walk_urls(child, out)
+
+
+def _tool_result_urls(content: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    try:
+        parsed = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        parsed = None
+    if isinstance(parsed, (dict, list)):
+        _walk_urls(parsed, pairs)
+    if not pairs:
+        for match in _SOURCE_URL_RE.finditer(content):
+            pairs.append(("", match.group(0)))
+    return pairs
+
+
+def _extract_sources(messages: list[BaseMessage]) -> tuple[list[tuple[str, str]], list[str]]:
+    """Return (labeled sources, tool path) for one agent turn, in retrieval order."""
+    sources: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    path: list[str] = []
+    # Pass 1: the actual objects that were read, so the original page/document
+    # ranks above the search listings that led to it.
+    for message in messages:
+        if not isinstance(message, AIMessage) or not message.tool_calls:
+            continue
+        for call in message.tool_calls:
+            name = call.get("name", "")
+            if name not in _READ_TOOLS:
+                continue
+            args = call.get("args") or {}
+            url = str(args.get("url") or args.get("link") or "").strip()
+            if url.startswith("http") and url not in seen:
+                seen.add(url)
+                sources.append(("原文", url))
+    # Pass 2: URLs inside tool results, in chronological order.
+    for message in messages:
+        name = ""
+        if isinstance(message, AIMessage) and message.tool_calls:
+            for call in message.tool_calls:
+                name = call.get("name", "")
+                if name and (not path or path[-1] != name):
+                    path.append(name)
+        elif isinstance(message, ToolMessage):
+            name = getattr(message, "name", "") or ""
+            if name and (not path or path[-1] != name):
+                path.append(name)
+            for label, url in _tool_result_urls(str(message.content or "")):
+                url = url.rstrip(".,;:!?)]}》」】'\"")
+                if url in seen or not url.startswith("http"):
+                    continue
+                seen.add(url)
+                sources.append((label, url))
+    return sources[: _SOURCE_LIMIT], path[:_PATH_LIMIT]
+
+
+def _source_footer(sources: list[tuple[str, str]], path: list[str]) -> str:
+    """Build a plain-text citation footer; Feishu renders bare URLs as links."""
+    if not sources:
+        return ""
+    lines = ["", "——", "📎 参考来源（可点击核对）："]
+    lines += [f"{index}. {label}：{url}" if label else f"{index}. {url}" for index, (label, url) in enumerate(sources, start=1)]
+    if path:
+        readable = " → ".join(_TOOL_LABELS.get(name, name) for name in path)
+        lines.append(f"📎 检索路径：{readable}")
+    return "\n".join(lines)
+
 
 @tool("memory_search")
 def native_memory_search(query: str) -> str:
@@ -244,6 +358,10 @@ def answer(graph: Any, question: str, context: str, owner_id: str, chat_id: str 
             if isinstance(message, AIMessage) and not message.tool_calls:
                 answer_text = plain_text(str(message.content or "")).strip()
                 if answer_text:
+                    sources, path = _extract_sources(result.get("messages", []))
+                    footer = _source_footer(sources, path)
+                    if footer:
+                        answer_text = f"{answer_text}{footer}"[:12_000]
                     obs.log_request(
                         request_id=request_id,
                         owner_id=owner_id,
