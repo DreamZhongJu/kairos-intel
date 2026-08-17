@@ -238,7 +238,7 @@ def render_log_detail(log_id: int) -> str:
       <h3 class="muted">工具调用链</h3>
       {steps}
       <h3 class="muted">回答</h3>
-      <div class="qa">{html.escape(r['answer']) or '<span class=\'muted\'>（无回答）</span>'}</div>
+      <div class="qa">{html.escape(r['answer']) or "<span class='muted'>（无回答）</span>"}</div>
       {"<div class='warn'>错误类型：" + html.escape(r['error_type']) + "</div>" if r['status'] != "ok" else ""}
       <p><a href="/logs">&lt;- 返回日志列表</a></p>
     </div>

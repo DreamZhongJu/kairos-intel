@@ -113,6 +113,9 @@ class MemoryGovernanceTest(unittest.TestCase):
         fake_completion.choices[0].message.content = (
             '{"ops":[{"op":"add","category":"研究","is_core":true,"content":"研究方向是KG-RAG"}]}'
         )
+        if store.llm is None:
+            # CI runs without credentials; give the patched call a surface.
+            store.llm = unittest.mock.MagicMock()
         with patch.object(store.llm.chat.completions, "create", return_value=fake_completion):
             store.memory_extract_node({"owner_id": OWNER, "message_id": "m1", "question": "我的研究方向是知识图谱增强的RAG"})
         rows = store.list_memories(OWNER)
