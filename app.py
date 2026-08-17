@@ -16,11 +16,13 @@ import lark_oapi as lark
 
 from kairos.agent import runtime as agent_runtime
 from kairos.channels.feishu import (
+    chunk_text,
     clean_question,
     event_to_dict,
     latest_file_in_chat,
     latest_reference_in_chat,
     message_text,
+    recall_message,
     recent_chat,
     reply,
     urls_in_message_content,
@@ -63,6 +65,14 @@ def _is_file_request(question: str) -> bool:
     return any(term in question for term in _FILE_REFERENCE_TERMS)
 
 
+def _send_answer(message_id: str, result: str, placeholder_id: str = "") -> None:
+    """Deliver the answer in readable chunks; withdraw the progress notice."""
+    if placeholder_id:
+        recall_message(placeholder_id)
+    for chunk in chunk_text(result):
+        reply(message_id, chunk)
+
+
 def _is_forget_memory_request(question: str) -> bool:
     return any(term in question for term in _FORGET_MEMORY_TERMS)
 
@@ -89,6 +99,7 @@ def process_event(data: Any) -> None:
     if not message_id or not chat_id or not question or not claim_message(message_id):
         return
 
+    placeholder_id = ""
     try:
         if _is_forget_memory_request(question):
             result = f"老师，已清除 {forget_memories(owner_id)} 条长期记忆。"
@@ -107,6 +118,7 @@ def process_event(data: Any) -> None:
             if shared_url and re.search(r"/(?:wiki|docx|docs)/", shared_url.group(0)):
                 # A Feishu document URL is a typed resource, not a heuristic
                 # topic match; resolve it directly through the authorized API.
+                placeholder_id = reply(message_id, "老师，收到，正在阅读文档，请稍候…")
                 result = document_summary(shared_url.group(0))
             else:
                 if message.get("message_type") == "post":
@@ -118,9 +130,10 @@ def process_event(data: Any) -> None:
                     reference = latest_reference_in_chat(chat_id)
                     if reference and reference.get("kind") == "webpage" and any(term in question for term in _NOTE_ACTION_TERMS):
                         question = f"{question}\n\nThe user is referring to this shared webpage: {reference['url']}"
+                placeholder_id = reply(message_id, "老师，收到，正在检索整理，请稍候…")
                 result = answer(question, recent_chat(chat_id), owner_id, chat_id)
 
-        reply(message_id, result)
+        _send_answer(message_id, result, placeholder_id)
         if not _is_forget_memory_request(question):
             threading.Thread(
                 target=persist_memory_async,
@@ -129,6 +142,8 @@ def process_event(data: Any) -> None:
             ).start()
     except Exception as exc:
         LOG.exception("request failed")
+        if placeholder_id:
+            recall_message(placeholder_id)
         try:
             reply(message_id, f"处理失败：{str(exc)[:300]}")
         except Exception:

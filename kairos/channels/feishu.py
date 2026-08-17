@@ -75,12 +75,51 @@ def user_feishu_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]
     return payload
 
 
-def reply(message_id: str, text: str) -> None:
-    feishu_request(
+def reply(message_id: str, text: str) -> str:
+    """Reply to a message; returns the new message id when available."""
+    payload = feishu_request(
         "POST",
         f"/im/v1/messages/{message_id}/reply",
         json={"msg_type": "text", "content": json.dumps({"text": text}, ensure_ascii=False)},
     )
+    data = payload.get("data") or {}
+    return str(data.get("message_id") or "")
+
+
+def recall_message(message_id: str) -> None:
+    """Withdraw a message previously sent by the bot (best effort)."""
+    try:
+        feishu_request("DELETE", f"/im/v1/messages/{message_id}")
+    except Exception as exc:
+        LOG.warning("recall failed for %s: %s", message_id, type(exc).__name__)
+
+
+TEXT_CHUNK_LIMIT = 1600
+
+
+def chunk_text(text: str, limit: int = TEXT_CHUNK_LIMIT) -> list[str]:
+    """Split plain text into Feishu-friendly chunks on paragraph boundaries."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in text.split("\n"):
+        piece = paragraph.strip()
+        if not piece:
+            continue
+        if current and len(current) + len(piece) + 1 > limit:
+            chunks.append(current)
+            current = ""
+        if current:
+            current = f"{current}\n{piece}"
+        else:
+            current = piece
+            while len(current) > limit:  # a single over-long paragraph
+                chunks.append(current[:limit])
+                current = current[limit:]
+    if current:
+        chunks.append(current)
+    return chunks or [text]
 
 
 def message_text(raw_content: str) -> str:
