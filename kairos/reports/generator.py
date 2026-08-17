@@ -58,6 +58,9 @@ DEFAULT_CONFIG = {
     "research_query": "all:\"machine translation\" OR all:\"neural machine translation\"",
     "new_tech_query": "artificial intelligence OR computer software OR developer tools OR computer systems OR semiconductors OR machine learning OR open source framework",
     "max_items_per_section": 5,
+    "github_trending": True,
+    "trending_since": "daily",
+    "trending_language": "",
     "company_roster": [
         "Astera Labs", "Celestial AI", "Groq", "SiFive", "Wiz",
         "Scale AI", "CoreWeave", "Nscale", "PostHog", "Snyk",
@@ -231,6 +234,59 @@ async def fetch_github_releases(client: httpx.AsyncClient, limit: int, published
             continue
         result.extend(feed)
     return sorted(result, key=lambda item: item.get("published_at", ""), reverse=True)[:limit]
+
+
+def parse_trending_html(page: str) -> list[dict]:
+    """Parse the server-rendered GitHub Trending page (no new dependency).
+
+    The page is static HTML: each repo is an <article class="Box-row"> block
+    with an h2 link to /owner/repo, an optional description <p>, the
+    programming language, and a "N stars today" span.  Structure changes are
+    tolerated: a block without a repo link is skipped, missing fields degrade
+    to empty strings.
+    """
+    items: list[dict] = []
+    for block in re.split(r'<article\s+class="Box-row"', page)[1:]:
+        repo_match = re.search(r'href="/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"', block)
+        if not repo_match or repo_match.group(1).startswith("sponsors/"):
+            continue
+        repo = repo_match.group(1)
+        # <p\s avoids matching SVG <path ...> elements that embed <p in their data.
+        description_match = re.search(r"<p\s[^>]*>(.*?)</p>", block, re.DOTALL)
+        description = re.sub(r"<[^>]+>", "", description_match.group(1)) if description_match else ""
+        description = re.sub(r"\s+", " ", html.unescape(description)).strip()
+        stars_match = re.search(r"([\d,]+)[^0-9]{0,20}stars?\s+today", block)
+        stars_today = stars_match.group(1).replace(",", "") if stars_match else ""
+        language_match = re.search(r'itemprop="programmingLanguage">([^<]+)<', block)
+        language = language_match.group(1).strip() if language_match else ""
+        markers = []
+        if stars_today:
+            markers.append(f"今日新增 {stars_today} star")
+        if language:
+            markers.append(f"语言 {language}")
+        summary = f"{description}（{'，'.join(markers)}）" if markers else description
+        items.append({
+            "id": f"trending:{repo}",
+            "title": f"{repo.replace('/', ' / ')} (GitHub Trending)",
+            "url": f"https://github.com/{repo}",
+            "summary": (summary or "GitHub Trending 热门仓库")[:1200],
+            "published_at": datetime.now(REPORT_TIMEZONE).isoformat(),
+        })
+    return items
+
+
+async def fetch_github_trending(
+    client: httpx.AsyncClient,
+    limit: int,
+    since: str = "daily",
+    language: str = "",
+) -> list[dict]:
+    """Fetch today's GitHub Trending repositories (daily/weekly, optional language)."""
+    language = (language or "").strip().lower()
+    path = f"/trending/{language}" if language else "/trending"
+    response = await client.get(f"https://github.com{path}", params={"since": since})
+    response.raise_for_status()
+    return parse_trending_html(response.text)[:limit]
 
 
 async def fetch_feed_pool(
@@ -435,6 +491,13 @@ async def collect(config: dict, state: dict) -> tuple[dict, list[dict], list[dic
             "new_tech_hn": fetch_hackernews(client, limit, start_at),
             "opensource_releases": fetch_github_releases(client, limit, start_at),
         }
+        if config.get("github_trending", True):
+            tasks["opensource_trending"] = fetch_github_trending(
+                client,
+                limit,
+                since=str(config.get("trending_since", "daily")),
+                language=str(config.get("trending_language", "") or "").strip().lower(),
+            )
         profiles = config["company_profiles"]
         profile = profiles[date.today().toordinal() % len(profiles)]
         company = profile["name"]
@@ -456,10 +519,14 @@ async def collect(config: dict, state: dict) -> tuple[dict, list[dict], list[dic
         sections.get("tech_rss", []) + sections.get("tech", []) + sections.get("new_tech_hn", [])
     )[:limit]
     sections["opensource"] = (
-        sections.get("opensource_releases", []) + sections.get("opensource_rss", [])
+        sections.get("opensource_releases", []) + sections.get("opensource_trending", [])
+        + sections.get("opensource_rss", [])
         + sections.get("opensource", []) + sections.get("new_tech_hn", [])
     )[:limit]
-    sections["new_tech"] = (sections.get("new_tech_hn", []) + sections.get("new_tech", []) + sections.get("opensource_releases", []))[:limit]
+    sections["new_tech"] = (
+        sections.get("new_tech_hn", []) + sections.get("new_tech", [])
+        + sections.get("opensource_releases", []) + sections.get("opensource_trending", [])
+    )[:limit]
     if not sections.get("new_tech"):
         # Preserve the daily technology section even when its dedicated news
         # query is empty, while keeping its evidence strictly in computing.
