@@ -425,11 +425,12 @@ Additional non-negotiable rules:
     return response.choices[0].message.content.strip()
 
 
-def send_feishu(markdown: str, report_date: str) -> None:
+def send_feishu(markdown: str, report_date: str, title: str | None = None) -> None:
+    header_title = title or f"每日情报日报｜{report_date}"
     card = {
         "schema": "2.0",
         "config": {"wide_screen_mode": True},
-        "header": {"title": {"tag": "plain_text", "content": f"每日情报日报｜{report_date}"}, "template": "blue"},
+        "header": {"title": {"tag": "plain_text", "content": header_title}, "template": "blue"},
         "body": {"elements": [{"tag": "markdown", "content": markdown}]},
     }
     target_chat = os.getenv("FEISHU_REPORT_CHAT_ID", "").strip()
