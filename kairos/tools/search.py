@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 
 from kairos.infrastructure.settings import REPORT_DIR
-from kairos.infrastructure.llm import build_client, model_name
+from kairos.infrastructure.llm import build_client_optional, model_name
 from kairos.tools.text import plain_text
 
 LOG = logging.getLogger("kairos.tools.search")
@@ -25,7 +25,7 @@ http.headers["User-Agent"] = "Kairós/1.0"
 direct_http = requests.Session()
 direct_http.trust_env = False
 direct_http.headers["User-Agent"] = "Kairós/1.0"
-llm = build_client()
+llm = build_client_optional()
 
 
 def _normalize_query(query: str) -> str:
@@ -236,6 +236,8 @@ def report_node(_: AssistantState) -> dict[str, Any]:
 
 
 def compose_node(state: AssistantState) -> dict[str, Any]:
+    if llm is None:
+        return {"answer": "模型未配置，无法生成回答。"}
     system = "你是飞书里的私人研究助理。只用中文纯文本回答，不要 Markdown。"
     messages = [
         {"role": "system", "content": system},

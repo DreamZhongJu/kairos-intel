@@ -11,14 +11,14 @@ from langchain_core.tools import tool
 
 from kairos.channels.feishu import user_feishu_request
 from kairos.infrastructure.settings import KNOWLEDGE_SPACES_PATH, SKILLS_DIR
-from kairos.infrastructure.llm import build_client, model_name
+from kairos.infrastructure.llm import build_client_optional, model_name
 from kairos.memory.store import _memory_terms
 from kairos.tools.text import plain_text
 
 LOG = logging.getLogger("kairos.tools.docs")
 http = requests.Session()
 http.headers["User-Agent"] = "Kairós/1.0"
-llm = build_client()
+llm = build_client_optional()
 
 
 def _document_id_from_link(link: str) -> str:
@@ -35,6 +35,8 @@ def _document_id_from_link(link: str) -> str:
 
 
 def _summarize(content: str) -> str:
+    if llm is None:
+        return "老师，模型未配置，暂时无法总结文档。"
     prompt = (
         "请用中文纯文本总结下面的飞书文档：主题、3-6 个要点、待办和风险（如有）。"
         "只依据原文，不要编造，不要使用 Markdown。\n\n"

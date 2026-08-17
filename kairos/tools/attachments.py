@@ -13,12 +13,12 @@ import requests
 
 from kairos.channels.feishu import tenant_token, user_feishu_request
 from kairos.infrastructure.settings import DB_PATH
-from kairos.infrastructure.llm import build_client, model_name
+from kairos.infrastructure.llm import build_client_optional, model_name
 from kairos.tools.text import plain_text
 
 http = requests.Session()
 http.headers["User-Agent"] = "Kairós/1.0"
-llm = build_client()
+llm = build_client_optional()
 
 
 def message_resource(message_id: str, file_key: str) -> bytes:
@@ -67,6 +67,8 @@ def prepare_note(message_id: str, content: str) -> str:
     text = extract_attachment(name, message_resource(message_id, key))[:60_000]
     if not text.strip():
         return "老师，附件中未提取到可读文本。"
+    if llm is None:
+        return "老师，模型未配置，暂时无法整理附件。"
 
     prompt = "用中文纯文本把下面附件整理为研究笔记：主题、核心要点、方法或证据、待办。不要 Markdown。\n\n" + text
     note = plain_text(
