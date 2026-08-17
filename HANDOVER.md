@@ -24,6 +24,12 @@ Kairós 是一个自托管的多渠道个人情报助手：飞书里的「凯伊
 - README 更新：每日情报日报已并入本仓库（不再是独立项目），旧 horizon 项目已归档说明。
 - 部署确认：2026-08-14 09:03 日报生成并推送成功（webhook 200，`structured-2026-08-14.md` 已生成）；大脑通道向目标会话发送测试消息返回 `code:0`。
 
+## 本轮追加（2026-08-14 ~ 08-17）
+
+- 回答可信度：回答末尾自动追加「📎 参考来源 + 检索路径」脚注——来源从真实工具调用链提取（搜索 JSON 的 url、`read_webpage`/`read_feishu_document` 入参、纯文本 URL 兜底），去重上限 6 条；模型自选引用（回答末尾「参考来源：」段）经运行时校验，只保留真实出现在工具输出中的 URL，杜绝幻觉链接；工具纪律约束 `github_research` 仅用于开源主题。
+- GitHub Trending 纳入日报：`fetch_github_trending()` 抓取 `github.com/trending?since=daily`（可选语言），解析服务端渲染 HTML、跳过赞助位，并入「开源社区动态」与「每日一个新技术」候选池；`report_config.json` 可配置 `github_trending` / `trending_since` / `trending_language`。2026-08-17 部署生效，次日 09:00 起日报包含 Trending 热门。
+- QQ（koishi/豫康）维持现状：调研后决定不合并（独立栈、Telegram 生态、人格体系差异大；桥接方案已评估，随时可做）。
+
 ## 关键位置 / 账号
 
 - 项目名：Kairós（品牌），仓库/包名 `kairos`，GitHub 仓库 `DreamZhongJu/kairos-intel`，主分支 `main`。
