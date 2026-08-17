@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -29,7 +30,6 @@ jobs:
     name: Offline evaluation
     runs-on: ubuntu-latest
     needs: test
-    if: ${{ secrets.DEEPSEEK_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,7 +39,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      # The secrets context is unavailable in job-level if:, so the key gate
+      # lives on this step; the job itself always runs and skips when unset.
       - name: Run offline evaluation
+        if: ${{ secrets.DEEPSEEK_API_KEY != '' }}
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: python evaluation/run_eval.py
