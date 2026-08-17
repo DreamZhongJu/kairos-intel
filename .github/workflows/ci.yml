@@ -39,10 +39,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      # The secrets context is unavailable in job-level if:, so the key gate
-      # lives on this step; the job itself always runs and skips when unset.
+      # The secrets context is not allowed inside if: expressions (job or
+      # step level), so the key gate happens in the shell: the step runs
+      # always and exits early when the secret is not configured.
       - name: Run offline evaluation
-        if: ${{ secrets.DEEPSEEK_API_KEY != '' }}
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python evaluation/run_eval.py
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "DEEPSEEK_API_KEY not configured; skipping offline evaluation"
+            exit 0
+          fi
+          python evaluation/run_eval.py
