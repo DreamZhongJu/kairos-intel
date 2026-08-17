@@ -30,6 +30,12 @@ Kairós 是一个自托管的多渠道个人情报助手：飞书里的「凯伊
 - GitHub Trending 纳入日报：`fetch_github_trending()` 抓取 `github.com/trending?since=daily`（可选语言），解析服务端渲染 HTML、跳过赞助位，并入「开源社区动态」与「每日一个新技术」候选池；`report_config.json` 可配置 `github_trending` / `trending_since` / `trending_language`。2026-08-17 部署生效，次日 09:00 起日报包含 Trending 热门。
 - QQ（koishi/豫康）维持现状：调研后决定不合并（独立栈、Telegram 生态、人格体系差异大；桥接方案已评估，随时可做）。
 
+## 本轮追加（2026-08-18）
+
+- 周报/月报：`kairos/reports/periodic.py` 汇总近期日报 + 请求日志（用量/工具/高频问题）+ 长期记忆，生成「每周情报周报」（周一 09:05）与「每月情报月报」（每月 1 日 09:10），经大脑通道推送；`WEEKLY_REPORT` / `MONTHLY_REPORT` / `DAILY_REPORT_WEEKLY_DAY` / `DAILY_REPORT_MONTHLY_DAY` 可配置。
+- 流式/分段回复：LLM 长回答前先发「正在检索整理」占位消息，完成后按段落分块（≤1600 字）发送并撤回占位（`chunk_text` / `recall_message`）。
+- 本地知识库与知识图谱：完成可行性研究，见 `docs-本地知识库与知识图谱设计.md`——结论是可做轻量版（LLM 抽取三元组 + SQLite 图存储 + 向量/关键词/图三通道检索），P1 向量 RAG / P2 图谱层 / P3 可视化，待实施。
+
 ## 关键位置 / 账号
 
 - 项目名：Kairós（品牌），仓库/包名 `kairos`，GitHub 仓库 `DreamZhongJu/kairos-intel`，主分支 `main`。
