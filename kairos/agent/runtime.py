@@ -41,6 +41,7 @@ from kairos.tools.docs import (
     native_save_cloud_document,
 )
 from kairos.tools.search import native_read_webpage, native_web_search
+from kairos.tools.skills_loader import native_skill_list, native_skill_load
 from kairos.tools.text import plain_text
 from kairos.tools import mcp_client
 
@@ -80,6 +81,8 @@ _TOOL_LABELS = {
     "archive_to_knowledge_base": "归档知识库",
     "preview_cloud_archive": "归档预览",
     "agent_reach_health": "工具健康检查",
+    "skill_list": "技能列表",
+    "skill_load": "加载技能",
 }
 
 _READ_TOOLS = {"read_webpage", "read_feishu_document"}
@@ -229,6 +232,8 @@ NATIVE_TOOLS = [
     x_search,
     reddit_search,
     bilibili_search,
+    native_skill_list,
+    native_skill_load,
 ]
 NATIVE_OPENAI_TOOLS = [convert_to_openai_tool(item) for item in NATIVE_TOOLS]
 
@@ -246,7 +251,9 @@ Call save_cloud_document only when the user explicitly asks to create or write a
 
 Tool discipline: use github_research only for open-source projects, code repositories, or GitHub activity questions. When researching universities, companies, people, news, or other non-open-source topics, use web_search or semantic_web_search instead and do not call github_research. Do not repeat the same search tool for the same question unless a new query is genuinely needed.
 
-Citations: if this answer relied on any links returned by tools, close the reply with a plain-text line "参考来源：" followed by one URL per line — copy each URL verbatim from the tool output, never rewrite or invent one, never use Markdown link syntax, and list only the pages whose content you actually used (no search listing pages), at most 5. If you did not rely on any link, do not add this section."""
+Citations: if this answer relied on any links returned by tools, close the reply with a plain-text line "参考来源：" followed by one URL per line — copy each URL verbatim from the tool output, never rewrite or invent one, never use Markdown link syntax, and list only the pages whose content you actually used (no search listing pages), at most 5. If you did not rely on any link, do not add this section.
+
+External skills: call skill_list to see what skills are available, then skill_load with the exact name to read the full instructions. When a task matches a skill description, follow that skill's instructions step by step using your tools. If skill_list is unavailable, proceed with your normal workflow."""
 
 
 def _as_openai_message(message: BaseMessage) -> dict[str, Any]:
