@@ -17,7 +17,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from openai import BadRequestError
 
-from kairos.infrastructure.llm import build_client_optional, model_name
+from kairos.infrastructure.llm import build_client_optional, model_name, role_client, route_question
 from kairos.memory import store as memory_store
 from kairos.observability import metrics as obs
 from kairos.tools.archive import native_archive_to_knowledge_base, native_preview_cloud_archive
@@ -315,9 +315,18 @@ def native_agent_node(state: MessagesState) -> dict[str, list[AIMessage]]:
     if llm is None:
         return {"messages": [AIMessage(content="模型未配置：缺少 API Key。")]}
     history = list(state.get("messages", []))
+    # Role-based routing: try a stronger model for complex questions.
+    question = ""
+    for item in history:
+        if isinstance(item, HumanMessage):
+            question = str(item.content or "")
+    role = route_question(question)
+    router_client, router_model = role_client(role)
+    client = router_client or llm
+    model = router_model or model_name()
     tool_turns = sum(1 for item in history if isinstance(item, ToolMessage))
-    completion = llm.chat.completions.create(
-        model=model_name(),
+    completion = client.chat.completions.create(
+        model=model,
         messages=[{"role": "system", "content": NATIVE_AGENT_SYSTEM}] + [_as_openai_message(item) for item in history],
         tools=ACTIVE_OPENAI_TOOLS if tool_turns < 3 else None,
         tool_choice="auto" if tool_turns < 3 else "none",

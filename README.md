@@ -1,115 +1,133 @@
 # Kairós
 
-一个自托管的多渠道个人情报助手（品牌名 Kairós，前身「飞书研究助手」）。它使用 LangGraph 编排工具调用，并可接入 DeepSeek、联网搜索、飞书云文档/知识库、日程和本地长期记忆。部署者可以为助手自行设定名称与人格；本项目不绑定特定角色名。
+[![CI](https://github.com/DreamZhongJu/kairos-intel/actions/workflows/ci.yml/badge.svg)](https://github.com/DreamZhongJu/kairos-intel/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## 能力
+一个自托管的多渠道个人情报助手（品牌名 Kairós，前身「飞书研究助手」）。部署者可以自行设定名称与人格，本项目不绑定特定角色名。
 
-- 飞书私聊和群聊中的对话式研究助手
-- 联网搜索、网页阅读、论文与研究趋势查询
-- 已授权飞书云文档、知识库与日程读取
-- 明确指令下创建云文档、归档知识库
-- LangGraph 工具节点与本地 Claude-Mem 长期记忆
-- 内置每日情报日报：定时聚合检索、生成并推送飞书
+---
 
-## 安全说明
+## 架构
 
-本仓库不会包含 API 密钥、飞书凭据、OAuth 授权结果、知识库私有标识、用户对话、附件、数据库或运行日志。请从示例配置创建自己的 `.env`。
-
-## 运行要求
-
-- Python 3.11+
-- 一个飞书自建应用及其所需权限
-- DeepSeek 或兼容 OpenAI 的模型接口
-- 可选：本地 Claude-Mem 服务，用于长期记忆
-
-安装依赖后，配置环境变量并运行 `python app.py`。
-
-## 每日情报日报
-
-每日情报日报已并入本仓库（`kairos/reports/`）：每天早上 09:00（Asia/Shanghai）自动聚合检索并生成，通过飞书推送到配置的会话（`FEISHU_REPORT_CHAT_ID`，未配置时回退到 `FEISHU_WEBHOOK_URL`），报告同时另存于 `DAILY_REPORT_DIR`（默认 `reports/`）。旧的独立日报项目（horizon）已停止调度并归档。
-
-## 本地开发与校验
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```mermaid
+graph TD
+    A[飞书 / OpenAPI / MCP] --> B[app.py · 事件分发]
+    B --> C[LangGraph Agent]
+    C --> D[25 个工具]
+    D --> E1[联网搜索 · 论文 · GitHub]
+    D --> E2[飞书文档 · 知识库 · 日程]
+    D --> E3[本地记忆 · 知识图谱]
+    D --> E4[技能读取 · 外部 MCP]
+    B --> F[日报 / 周报 / 月报]
+    F --> G[飞书推送]
+    C --> H[SQLite · Claude-Mem]
+    H --> I[观测 · 反馈 · 评测]
 ```
 
-未配置密钥时，模块仍可被导入并运行测试；执行 `python app.py` 才会校验
-`LARK_APP_ID`、`LARK_APP_SECRET`、`DEEPSEEK_API_KEY` 与 `TOKEN_ENCRYPTION_KEY`。
+## 能力全景
+
+### 对话式研究助手
+- 飞书私聊 / 群聊（@ 触发），服务端 WS 长连接
+- 25 个注册工具，LangGraph 自主编排调用
+- 回答带**可校验的引用来源**（检索路径 + 实际链接）
+- 长回答**分段发送 + 占位消息**，体验流畅
+- 多模型路由（按问题复杂度自动选模型）
+
+### 知识管理
+- **分层长期记忆**（核心记忆 + 存档记忆，SQLite 持久化）
+- **本地知识图谱**（零向量模型，FTS5 关键词 + 实体关系图，支持"湖北大学和机器翻译什么关系"）
+- 飞书云文档 / 知识库 / 日程读写（需 OAuth 授权）
+- **外部技能系统**：62 个研究技能按需加载（`skill_list` / `skill_load`）
+
+### 情报日报体系
+- 每日 09:00 自动聚合（社会/科技/开源/研究/新技术/每周团队），含 GitHub Trending
+- 每周一 09:05 周报 / 每月 1 日 09:10 月报（汇总日报 + 用量 + 记忆）
+- 可配置推送目标（飞书大脑通道 / 自定义 webhook）
+
+### 开放与集成
+- **MCP 服务**：暴露 11 个工具给外部 AI 客户端（`python -m kairos.server.mcp`）
+- **OpenAPI REST**：`/health` `/api/chat` `/api/tools` `/api/reports` `/api/knowledge/stats`（与 app 一起启动，端口 `KAIROS_API_PORT` 默认 8095）
+- **MCP 客户端**：可动态接入外部 MCP 工具（`mcp_servers.json`）
+- 多 Provider 模型（DeepSeek / OpenAI / Qwen / Moonshot / 智谱 / SiliconFlow / OpenRouter / Ollama）
+
+### 观测与质量
+- Web 面板（仪表盘 / 日志 / 记忆 / 运行状态）
+- 离线评测套件（honesty / relevancy / 工具路由，13 问答 + 10 路由）
+- **反馈闭环**：用户 emoji 反应（👍/👎）入库，差评可回溯复测
+- CI 在无凭据环境跑全部 79 个单测
+
+## 快速开始
+
+```bash
+# 复制配置
+cp .env.example .env   # 填 LARK_APP_ID / LARK_APP_SECRET / DEEPSEEK_API_KEY
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 跑测试（无需密钥）
+python -m unittest discover -s tests -v
+
+# 启动（飞书 WS + OpenAPI + 调度器）
+python app.py
+```
+
+Docker Compose 一键部署（含代理、cloudflared tunnel）：
+
+```bash
+docker compose up -d --build kairos
+```
+
+## 配置速查
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | — | 模型 API Key |
+| `MODEL_PROVIDER` | `deepseek` | 模型提供方（openai / qwen / moonshot / zhipu / siliconflow / openrouter / ollama） |
+| `LARK_APP_ID` / `LARK_APP_SECRET` | — | 飞书自建应用凭据 |
+| `FEISHU_REPORT_CHAT_ID` | — | 日报推送目标（大脑通道） |
+| `FEISHU_WEBHOOK_URL` | — | 日报推送回退（webhook） |
+| `SKILL_API_URL` | — | 外部技能读取服务地址 |
+| `KAIROS_API_PORT` | `8095` | OpenAPI 服务端口 |
+| `ROUTER_STRONG_MODEL` | — | 复杂问题的模型（多模型路由） |
+
+完整配置见 `.env.example`。
 
 ## 代码结构
 
-- `app.py`：飞书事件入口、显式确认流程与服务装配。
-- `kairos/agent/`：LangGraph 工具调用图与模型消息兼容层。
-- `kairos/tools/`：搜索、网页、论文、云文档、知识库、附件、日程和归档工具。
-- `kairos/channels/`：飞书消息与 API 传输。
-- `kairos/memory/`：SQLite 长期记忆与 Claude-Mem 适配。
-- `kairos/reports/`：每日情报日报生成与调度。
-- `tests/`：无需真实密钥或联网的启动级冒烟测试。
+```
+kairos/
+├── agent/          LangGraph 工具调用图 + 引用脚注 + 路由
+├── tools/          搜索、网页、论文、GitHub、飞书文档、知识库、技能
+├── channels/       飞书消息与 API 传输（分块、撤回）
+├── memory/         SQLite 分层记忆 + Claude-Mem
+├── knowledge/      本地知识图谱（FTS5 + 实体关系图，无向量）
+├── reports/        日报 / 周报 / 月报生成与调度
+├── server/         MCP 服务 + OpenAPI REST
+├── infrastructure/ 模型层、设置、多 Provider 路由
+└── observability/  请求日志、指标、反馈闭环
+```
 
-## 评测
+## 路线图
 
-离线评测套件位于 `evaluation/`，可在不依赖飞书/外部服务的情况下复现：
+- [x] 飞书对话 + 工具调用 + 长期记忆
+- [x] 每日情报日报 + 周报 / 月报
+- [x] 回答引用来源（verifiable citations）
+- [x] 分段回复 + 占位进度
+- [x] 本地知识图谱（无 embedding）
+- [x] 外部技能接口 + 62 个研究技能
+- [x] MCP 服务 + OpenAPI REST
+- [x] 反馈闭环（👍/👎 入库）
+- [x] 多模型路由
+- [ ] 用户级订阅推送
+- [ ] 多模态（语音 / 图片）
+- [ ] 反馈驱动的自动化评测回测
 
-| 维度 | 指标 | 结果 |
-| --- | --- | --- |
-| 知识问答 | 平均忠实度（faithfulness） | 1.000 |
-| 知识问答 | 平均回答相关性（answer relevancy） | 1.000 |
-| 知识问答 | 上下文命中率 hit@3 | 1.000 |
-| 知识问答 | 负例不编造率 | 1.000 |
-| 工具路由 | Top-1 准确率 | 1.000 |
-| 工具路由 | Top-3 准确率 | 1.000 |
+## 贡献
 
-运行方式：
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。欢迎 Issue / PR。
 
-````powershell
-.\.venv\Scripts\python.exe evaluation\run_eval.py
-````
+## 许可证
 
-说明：评测集为项目自身文档语料（31 块）、13 个问答用例（含 3 个负例）与 10 个工具路由用例；结果见 `evaluation/eval_report.md`。评测使用 DeepSeek 作为生成与打分模型，需在 `.env` 配置 `DEEPSEEK_API_KEY`。
-
-## 可观测性与 Web 面板
-
-每次请求（问题、工具调用链、token、耗时、状态）自动记录到 `data/assistant.db`，并在本地 Web 面板可视化：
-
-- 仪表盘：请求量、成功率、平均耗时、Token 消耗、近 7 天趋势、工具调用排行
-- 请求日志：按状态/工具筛选、分页、查看单条详情（工具调用链与完整回答）
-- 运行状态：模型、工具数、Claude-Mem、数据库路径等配置概览
-
-启动面板：
-
-````powershell
-.\.venv\Scripts\python.exe web_panel.py
-````
-
-默认地址 http://127.0.0.1:8090 ；可选设置 `PANEL_TOKEN` 启用访问令牌，`PANEL_PORT` 修改端口。日志中的 question/answer 已脱敏，owner 已哈希存储。
-
-## 记忆分层治理
-
-长期记忆按 mem0 / Letta 的思路分两层治理：
-
-- **核心记忆**：用户长期身份与核心偏好（姓名、研究方向、重要偏好），每次请求都会加载，每用户最多 8 条，超出自动修剪最旧的。
-- **存档记忆**：项目、习惯、决定等可检索事实，按相关性召回（召回会更新访问统计），每用户上限 120 条，按最近访问时间自动清理。
-
-记忆写入由模型输出显式操作（`add` / `update` / `delete` / `noop`），同一事实会被合并更新而不是重复插入；用户说"忘记 XX"会删除对应记忆。敏感信息（密钥、密码）在写入前被过滤。
-
-## MCP 客户端
-
-支持通过 MCP（Model Context Protocol）动态接入外部工具，无需为每个工具写代码：
-
-- 复制 `mcp_servers.example.json` 为 `mcp_servers.json`，启用需要的 server（支持 `stdio` 本地进程与 `streamable_http` 远程服务两种传输）。
-- 启动时自动发现并注册这些 server 暴露的工具，Agent 可直接调用；某个 server 不可用时自动跳过，不影响内置工具。
-- 依赖 `mcp` Python SDK（已加入 `requirements.txt`）。
-
-仪表盘另含估算成本（按 token × 单价，可通过 `DEEPSEEK_INPUT_PRICE_PER_M` / `DEEPSEEK_OUTPUT_PRICE_PER_M` 调整）与最近失败列表；MCP 配置（`mcp_servers.json`）在启动时校验，无效 server 会跳过并给出明确原因。
-
-## 记忆管理
-
-Web 面板新增「记忆」页：按用户查看核心/存档记忆（类别、访问次数、更新时间），支持删除单条与清空某用户全部记忆。
-
-## 评测闭环
-
-- 真实请求回放：`evaluation\replay_eval.py` 读取请求日志中的真实问答并打分（相关性、完整性），把生产使用转化为回归信号。
-- CI：`.github/workflows/ci.yml` 在无凭据环境运行全部单测；配置 `DEEPSEEK_API_KEY` secret 后追加离线评测 job。
+MIT — 详见 [LICENSE](LICENSE)。第三方依赖许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -68,3 +68,52 @@ def build_client_optional(config: ModelConfig | None = None) -> OpenAI | None:
 
 def model_name() -> str:
     return resolve_model_config().model
+
+
+# --- Multi-model routing ---------------------------------------------------
+
+STRONG_TERMS = (
+    "调研", "深度", "复杂", "分析报告", "综述", "论文", "研究", "报告",
+    "代码", "review", "research", "survey", "litreview", "grant", "立项",
+    "文献", "写作", "润色", "评审", "审稿", "rebat", "latex", "slides",
+)
+
+
+def route_question(question: str) -> str:
+    """Heuristic role classifier: 'strong' for complex work, 'default' otherwise."""
+    q = (question or "").lower()
+    if any(term in q for term in STRONG_TERMS):
+        return "strong"
+    return "default"
+
+
+def role_client(role: str) -> tuple[OpenAI | None, str]:
+    """Return (client, model) for a named role, or (None, '') if unconfigured.
+
+    Config via env: ROUTER_<ROLE>_PROVIDER, ROUTER_<ROLE>_MODEL,
+    ROUTER_<ROLE>_BASE_URL, ROUTER_<ROLE>_API_KEY.
+    When unset, the caller should fall back to the global :func:`build_client_optional` / :func:`model_name`.
+    """
+    role = role.strip().lower()
+    if not role:
+        return None, ""
+    provider = os.getenv(f"ROUTER_{role.upper()}_PROVIDER", "").strip()
+    model = os.getenv(f"ROUTER_{role.upper()}_MODEL", "").strip()
+    base_url = os.getenv(f"ROUTER_{role.upper()}_BASE_URL", "").strip()
+    api_key = os.getenv(f"ROUTER_{role.upper()}_API_KEY", "").strip()
+    if not (provider or model or base_url or api_key):
+        return None, ""
+    preset = PROVIDER_PRESETS.get(provider or settings.MODEL_PROVIDER, {})
+    actual_base = base_url or preset.get("base_url", "")
+    actual_key = api_key or settings.MODEL_API_KEY or os.getenv(
+        preset.get("env_key", ""), ""
+    ).strip() or settings.DEEPSEEK_KEY
+    if not actual_key and not api_key:
+        return None, ""
+    cfg = ModelConfig(
+        base_url=actual_base,
+        api_key=actual_key,
+        model=model or settings.MODEL_NAME or settings.MODEL,
+        provider=provider or "default",
+    )
+    return build_client_optional(cfg), cfg.model

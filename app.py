@@ -37,6 +37,7 @@ from kairos.memory.store import (
     persist_memory_async,
 )
 from kairos.observability import metrics as obs
+from kairos.observability import feedback as fb_store
 from kairos.tools.archive import execute_archive_batch
 from kairos.tools.attachments import create_note, prepare_note
 from kairos.tools.docs import document_summary
@@ -65,12 +66,14 @@ def _is_file_request(question: str) -> bool:
     return any(term in question for term in _FILE_REFERENCE_TERMS)
 
 
-def _send_answer(message_id: str, result: str, placeholder_id: str = "") -> None:
+def _send_answer(message_id: str, result: str, placeholder_id: str = "") -> list[str]:
     """Deliver the answer in readable chunks; withdraw the progress notice."""
     if placeholder_id:
         recall_message(placeholder_id)
+    reply_ids: list[str] = []
     for chunk in chunk_text(result):
-        reply(message_id, chunk)
+        reply_ids.append(reply(message_id, chunk))
+    return reply_ids
 
 
 def _is_forget_memory_request(question: str) -> bool:
@@ -133,7 +136,9 @@ def process_event(data: Any) -> None:
                 placeholder_id = reply(message_id, "老师，收到，正在检索整理，请稍候…")
                 result = answer(question, recent_chat(chat_id), owner_id, chat_id)
 
-        _send_answer(message_id, result, placeholder_id)
+        reply_ids = _send_answer(message_id, result, placeholder_id)
+        if reply_ids and not _is_forget_memory_request(question):
+            fb_store.record_answer(owner_id, chat_id, question, result, reply_ids)
         if not _is_forget_memory_request(question):
             threading.Thread(
                 target=persist_memory_async,
@@ -153,6 +158,31 @@ def process_event(data: Any) -> None:
 def on_message(data: Any) -> None:
     """Return quickly so Feishu does not retry a long-running LLM request."""
     threading.Thread(target=process_event, args=(data,), daemon=True).start()
+
+
+def _process_reaction(data: Any) -> None:
+    try:
+        payload = event_to_dict(data)
+        event = payload.get("event", payload)
+        body = event.get("body") or event
+        message_id = str(event.get("message_id") or body.get("message_id") or "")
+        if not message_id:
+            return
+        if str(event.get("action_type") or body.get("action_type") or "") == "deleted":
+            return  # reaction removed; keep the earlier rating
+        react_type = event.get("react_type") or body.get("react_type") or {}
+        rtype = react_type.get("type") if isinstance(react_type, dict) else str(react_type)
+        r = str(rtype or "").upper()
+        if r in ("THUMBS_UP", "LIKE"):
+            fb_store.mark(message_id, True)
+        elif r in ("THUMBS_DOWN", "DISLIKE"):
+            fb_store.mark(message_id, False)
+    except Exception:
+        LOG.exception("reaction handling failed")
+
+
+def on_reaction(data: Any) -> None:
+    threading.Thread(target=_process_reaction, args=(data,), daemon=True).start()
 
 
 def _start_api_server() -> None:
@@ -182,7 +212,13 @@ def main() -> None:
     start_oauth_server()
     start_scheduler()
     _start_api_server()
-    handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(on_message).build()
+    fb_store.init()
+    handler = (
+        lark.EventDispatcherHandler.builder("", "")
+        .register_p2_im_message_receive_v1(on_message)
+        .register_p2_im_message_reaction_created_v1(on_reaction)
+        .build()
+    )
     client = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
     LOG.info("starting Feishu long connection")
     client.start()
