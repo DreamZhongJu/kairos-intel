@@ -1,0 +1,1 @@
+"""Local knowledge graph: SQLite + FTS5 keyword retrieval + entity graph."""

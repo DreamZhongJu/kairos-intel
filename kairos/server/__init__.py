@@ -1,0 +1,1 @@
+"""Public service surfaces: MCP server and OpenAPI REST endpoints."""

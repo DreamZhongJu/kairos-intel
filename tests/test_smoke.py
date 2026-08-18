@@ -13,7 +13,7 @@ from kairos.tools import docs
 
 class AssistantSmokeTests(unittest.TestCase):
     def test_all_registered_tools_are_langchain_tools(self) -> None:
-        self.assertEqual(len(runtime.NATIVE_TOOLS), 22)
+        self.assertEqual(len(runtime.NATIVE_TOOLS), 25)
         self.assertTrue(all(getattr(tool, "name", "") for tool in runtime.NATIVE_TOOLS))
         self.assertTrue(all(hasattr(tool, "invoke") for tool in runtime.NATIVE_TOOLS))
 

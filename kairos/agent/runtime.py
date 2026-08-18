@@ -42,6 +42,11 @@ from kairos.tools.docs import (
 )
 from kairos.tools.search import native_read_webpage, native_web_search
 from kairos.tools.skills_loader import native_skill_list, native_skill_load
+from kairos.knowledge.tools import (
+    native_knowledge_graph_query,
+    native_knowledge_ingest,
+    native_knowledge_search,
+)
 from kairos.tools.text import plain_text
 from kairos.tools import mcp_client
 
@@ -83,6 +88,9 @@ _TOOL_LABELS = {
     "agent_reach_health": "工具健康检查",
     "skill_list": "技能列表",
     "skill_load": "加载技能",
+    "knowledge_ingest": "知识入库",
+    "knowledge_graph_query": "图谱查询",
+    "knowledge_search": "知识检索",
 }
 
 _READ_TOOLS = {"read_webpage", "read_feishu_document"}
@@ -234,6 +242,9 @@ NATIVE_TOOLS = [
     bilibili_search,
     native_skill_list,
     native_skill_load,
+    native_knowledge_ingest,
+    native_knowledge_graph_query,
+    native_knowledge_search,
 ]
 NATIVE_OPENAI_TOOLS = [convert_to_openai_tool(item) for item in NATIVE_TOOLS]
 
@@ -253,7 +264,9 @@ Tool discipline: use github_research only for open-source projects, code reposit
 
 Citations: if this answer relied on any links returned by tools, close the reply with a plain-text line "参考来源：" followed by one URL per line — copy each URL verbatim from the tool output, never rewrite or invent one, never use Markdown link syntax, and list only the pages whose content you actually used (no search listing pages), at most 5. If you did not rely on any link, do not add this section.
 
-External skills: call skill_list to see what skills are available, then skill_load with the exact name to read the full instructions. When a task matches a skill description, follow that skill's instructions step by step using your tools. If skill_list is unavailable, proceed with your normal workflow."""
+External skills: call skill_list to see what skills are available, then skill_load with the exact name to read the full instructions. When a task matches a skill description, follow that skill's instructions step by step using your tools. If skill_list is unavailable, proceed with your normal workflow.
+
+Knowledge graph (offline, no embedding): when the user asks about their own notes, ingested documents, or relations between things (people, institutions, papers, products), prefer the local knowledge tools. Use knowledge_ingest to store new material, knowledge_search for keyword retrieval of stored text, and knowledge_graph_query to see how one entity relates to others. These use only SQLite + keywords, no embedding model."""
 
 
 def _as_openai_message(message: BaseMessage) -> dict[str, Any]:

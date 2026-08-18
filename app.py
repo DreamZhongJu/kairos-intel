@@ -155,6 +155,21 @@ def on_message(data: Any) -> None:
     threading.Thread(target=process_event, args=(data,), daemon=True).start()
 
 
+def _start_api_server() -> None:
+    """Run the OpenAPI REST service in a background thread (best effort)."""
+    def _run() -> None:
+        from kairos.server.api import create_app
+
+        port = int(os.getenv("KAIROS_API_PORT", "8095"))
+        LOG.info("starting kairos OpenAPI service on :%s", port)
+        try:
+            create_app().run(host="0.0.0.0", port=port, threaded=True)
+        except Exception:
+            LOG.exception("kairos API server failed")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def main() -> None:
     """Validate configuration, initialize durable state, and start Feishu WS."""
     global TOOL_GRAPH
@@ -166,6 +181,7 @@ def main() -> None:
     init_oauth()
     start_oauth_server()
     start_scheduler()
+    _start_api_server()
     handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(on_message).build()
     client = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler, log_level=lark.LogLevel.INFO)
     LOG.info("starting Feishu long connection")
