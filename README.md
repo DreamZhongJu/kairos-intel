@@ -52,7 +52,7 @@ graph TD
 - 多 Provider 模型（DeepSeek / OpenAI / Qwen / Moonshot / 智谱 / SiliconFlow / OpenRouter / Ollama）
 
 ### 观测与质量
-- Web 面板（仪表盘 / 日志 / 记忆 / 运行状态）
+- Web 面板（仪表盘 / 日志 / 记忆 / 知识图谱可视化 / 运行状态）
 - 离线评测套件（honesty / relevancy / 工具路由，13 问答 + 10 路由）
 - **反馈闭环**：用户 emoji 反应（👍/👎）入库，差评可回溯复测
 - CI 在无凭据环境跑全部 79 个单测

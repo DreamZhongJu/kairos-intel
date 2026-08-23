@@ -44,7 +44,9 @@ def native_knowledge_ingest(text: str, title: str = "") -> str:
             pass
     for rel in relations:
         try:
-            engine.add_relation(rel["subject"], rel["predicate"], rel["object"])
+            engine.add_relation(
+                rel["subject"], rel["predicate"], rel["object"], confidence=int(rel.get("confidence", 1))
+            )
         except Exception:
             pass
     return (

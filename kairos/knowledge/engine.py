@@ -134,6 +134,27 @@ def _normalize(name: str) -> str:
     return "".join(width.get(ch, ch) for ch in name).lower()
 
 
+# Functional suffixes stripped when resolving an entity's alias base, so
+# "肉鸽玩法" / "肉鸽系统" collapse onto "肉鸽". Deliberately conservative:
+# we only strip a small whitelist of modifiers, never do arbitrary substring
+# matching (which would wrongly merge e.g. Java/JavaScript or SQL/MySQL).
+_KNOWN_SUFFIXES = ("系统", "玩法", "模式", "协议", "模块", "机制", "功能")
+
+# Explicit cross-language / curated synonyms (normalized key -> canonical base).
+_SYNONYM_ALIASES = {"roguelike": "肉鸽"}
+
+
+def _alias_base(name: str) -> str:
+    """Map a name to its canonical alias base for entity dedup."""
+    base = _normalize(name)
+    base = _SYNONYM_ALIASES.get(base, base)
+    for suffix in _KNOWN_SUFFIXES:
+        if base.endswith(suffix) and len(base) - len(suffix) >= 2:
+            base = base[: -len(suffix)]
+            break
+    return base
+
+
 def add_document(title: str, text: str, kind: str = "note", source: str = "") -> int:
     """Store a document's chunks and return the new document id."""
     chunks = chunk_text(text)
@@ -161,8 +182,11 @@ def add_document(title: str, text: str, kind: str = "note", source: str = "") ->
 
 
 def upsert_entity(name: str, etype: str = "entity") -> int:
-    """Insert an entity deduplicated by normalized name."""
-    canonical = _normalize(name)
+    """Insert an entity deduplicated by alias-aware canonical name."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("entity name required")
+    canonical = _alias_base(name)
     con = _connect()
     try:
         row = con.execute("SELECT id FROM entities WHERE canonical=? LIMIT 1", (canonical,)).fetchone()
@@ -199,7 +223,7 @@ def add_relation(subject: str, predicate: str, obj: str, chunk_id: int | None = 
 
 
 def find_entity(name: str) -> dict | None:
-    canonical = _normalize(name)
+    canonical = _alias_base(name)
     con = _connect()
     try:
         row = con.execute("SELECT * FROM entities WHERE canonical=?", (canonical,)).fetchone()
@@ -309,5 +333,100 @@ def stats() -> dict[str, Any]:
     try:
         docs = int(con.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
         return {"documents": docs, "entities": entity_count(), "relations": relation_count()}
+    finally:
+        con.close()
+
+
+def export_graph() -> dict[str, Any]:
+    """Dump the full graph for visualization and external tooling.
+
+    Returns nodes (with degree for sizing), edges (with predicate labels), and
+    overall counts. Read-only; used by the web panel's graph page and CLI.
+    """
+    con = _connect()
+    try:
+        nodes_raw = con.execute("SELECT id, name, type, canonical FROM entities ORDER BY id").fetchall()
+        edges_raw = con.execute("SELECT subject_id, predicate, object_id FROM relations ORDER BY id").fetchall()
+        degree: dict[int, int] = {int(row["id"]): 0 for row in nodes_raw}
+        edges: list[dict[str, Any]] = []
+        for row in edges_raw:
+            subject_id = int(row["subject_id"])
+            object_id = int(row["object_id"])
+            degree[subject_id] = degree.get(subject_id, 0) + 1
+            degree[object_id] = degree.get(object_id, 0) + 1
+            edges.append({"source": subject_id, "target": object_id, "predicate": row["predicate"]})
+        nodes = [
+            {"id": int(row["id"]), "name": row["name"], "type": row["type"], "degree": degree.get(int(row["id"]), 0)}
+            for row in nodes_raw
+        ]
+        doc_count = int(con.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {"documents": doc_count, "entities": len(nodes), "relations": len(edges)},
+        }
+    finally:
+        con.close()
+
+
+def _degree_of(con: sqlite3.Connection, eid: int) -> int:
+    row = con.execute(
+        "SELECT COUNT(*) FROM relations WHERE subject_id=? OR object_id=?", (eid, eid)
+    ).fetchone()
+    return int(row[0])
+
+
+def _merge_into(con: sqlite3.Connection, keep_id: int, dup_id: int) -> None:
+    """Reassign dup's relations onto keep, dropping self-loops and duplicates."""
+    existing = {
+        (int(r["subject_id"]), r["predicate"], int(r["object_id"]))
+        for r in con.execute("SELECT subject_id, predicate, object_id FROM relations").fetchall()
+    }
+    rels = con.execute(
+        "SELECT id, subject_id, predicate, object_id FROM relations WHERE subject_id=? OR object_id=?",
+        (dup_id, dup_id),
+    ).fetchall()
+    for r in rels:
+        sid = keep_id if int(r["subject_id"]) == dup_id else int(r["subject_id"])
+        oid = keep_id if int(r["object_id"]) == dup_id else int(r["object_id"])
+        if sid == oid:
+            con.execute("DELETE FROM relations WHERE id=?", (r["id"],))
+            continue
+        key = (sid, r["predicate"], oid)
+        if key in existing:
+            con.execute("DELETE FROM relations WHERE id=?", (r["id"],))
+            continue
+        existing.add(key)
+        con.execute("UPDATE relations SET subject_id=?, object_id=? WHERE id=?", (sid, oid, r["id"]))
+    con.execute("DELETE FROM entities WHERE id=?", (dup_id,))
+
+
+def dedupe_aliases() -> dict[str, Any]:
+    """Merge existing entities that share an alias base (e.g. 肉鸽/肉鸽玩法/Roguelike).
+
+    Re-canonicalizes every entity under :func:`_alias_base`, then folds each
+    collision group into the most-connected member. Returns a summary of what
+    was merged; safe to run idempotently.
+    """
+    con = _connect()
+    try:
+        rows = con.execute("SELECT id, name FROM entities").fetchall()
+        for r in rows:
+            con.execute("UPDATE entities SET canonical=? WHERE id=?", (_alias_base(r["name"]), r["id"]))
+        rows = con.execute("SELECT id, name, type, canonical FROM entities").fetchall()
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for r in rows:
+            groups.setdefault(r["canonical"], []).append(r)
+        merged: list[dict[str, str]] = []
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            members.sort(key=lambda m: (-_degree_of(con, int(m["id"])), int(m["id"])))
+            keep = members[0]
+            for dup in members[1:]:
+                _merge_into(con, int(keep["id"]), int(dup["id"]))
+                merged.append({"alias": dup["name"], "canonical": keep["name"]})
+        con.commit()
+        return {"merged": len(merged), "pairs": merged}
     finally:
         con.close()

@@ -19,6 +19,7 @@ from flask import Flask, jsonify, redirect, render_template_string, request
 from markupsafe import Markup
 
 from kairos.infrastructure.settings import CLAUDE_MEM_URL, DB_PATH, MODEL
+from kairos.knowledge import engine as kg_engine
 from kairos.memory import store as memory_store
 from kairos.observability import metrics
 
@@ -94,6 +95,7 @@ a { color:var(--accent); }
   <a href="/" class="active">仪表盘</a>
   <a href="/logs">请求日志</a>
   <a href="/memories">记忆</a>
+  <a href="/graph">知识图谱</a>
   <a href="/health">运行状态</a>
 </nav>
 <main>
@@ -327,6 +329,301 @@ def render_memories() -> str:
     return _page(body)
 
 
+def render_graph() -> str:
+    """Interactive force-directed knowledge graph view (self-contained, no CDN)."""
+    body = """
+    <style>
+      .graph-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+      .graph-toolbar input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; width:220px; }
+      #graph-wrap { position:relative; height:72vh; border:1px solid var(--border); border-radius:10px; background:#fbfcfe; overflow:hidden; }
+      #graph-canvas { width:100%; height:100%; display:block; cursor:grab; }
+      #graph-canvas.dragging { cursor:grabbing; }
+      #graph-empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:20px; }
+      .graph-legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; }
+      .legend-item { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+      .legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+      .graph-detail { margin-top:12px; padding:12px 14px; background:#fafbfc; border:1px solid var(--border); border-radius:8px; font-size:13px; min-height:20px; }
+      .graph-detail .detail-title { font-size:14px; margin-bottom:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .graph-detail .rel { padding:3px 0; border-bottom:1px dashed var(--border); }
+      .graph-detail .rel .pred { color:var(--accent); font-weight:600; margin-right:6px; }
+      #graph-tip { position:absolute; pointer-events:none; background:rgba(20,30,45,.92); color:#fff; padding:6px 10px; border-radius:6px; font-size:12px; display:none; z-index:5; }
+    </style>
+    <div class="cards">
+      <div class="card"><div class="label">文档</div><div class="value" id="stat-docs">—</div></div>
+      <div class="card"><div class="label">实体</div><div class="value" id="stat-entities">—</div></div>
+      <div class="card"><div class="label">关系</div><div class="value" id="stat-relations">—</div></div>
+    </div>
+    <div class="panel">
+      <div class="graph-toolbar">
+        <input id="graph-search" placeholder="搜索实体并定位…">
+        <button class="btn" id="graph-reset" type="button">重置视图</button>
+        <span class="muted">滚轮缩放 · 拖拽平移 · 拖节点调整 · 点击查看关联</span>
+      </div>
+      <div id="graph-wrap">
+        <canvas id="graph-canvas"></canvas>
+        <div id="graph-tip"></div>
+        <div id="graph-empty" class="warn"></div>
+      </div>
+      <div class="graph-legend" id="graph-legend"></div>
+      <div class="graph-detail" id="graph-detail"><span class="muted">点击节点查看关联关系</span></div>
+    </div>
+    <script>
+    (function(){
+      function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+      var canvas = document.getElementById('graph-canvas');
+      var ctx = canvas.getContext('2d');
+      var wrap = document.getElementById('graph-wrap');
+      var tip = document.getElementById('graph-tip');
+      var empty = document.getElementById('graph-empty');
+      var detail = document.getElementById('graph-detail');
+      var legendEl = document.getElementById('graph-legend');
+      var dpr = window.devicePixelRatio || 1;
+
+      function setStats(obj){
+        document.getElementById('stat-docs').textContent = obj.documents;
+        document.getElementById('stat-entities').textContent = obj.entities;
+        document.getElementById('stat-relations').textContent = obj.relations;
+      }
+
+      fetch('/api/graph').then(function(r){ return r.json(); }).then(function(data){
+        setStats(data.stats);
+        var rawNodes = data.nodes || [];
+        var rawEdges = data.edges || [];
+        if (!rawNodes.length){
+          empty.textContent = '知识图谱还是空的。去飞书让助手「把这份资料入库」，或通过 MCP 调用 knowledge_ingest，实体与关系就会出现在这里。';
+          empty.style.display = 'flex';
+          return;
+        }
+        init(rawNodes, rawEdges);
+      }).catch(function(e){
+        setStats({documents:'?', entities:'?', relations:'?'});
+        empty.textContent = '加载图谱失败：/api/graph 不可用（' + esc(e && e.message ? e.message : '') + '）';
+        empty.style.display = 'flex';
+      });
+
+      function init(rawNodes, rawEdges){
+        var nodes = rawNodes.map(function(n){
+          return { id: n.id, name: n.name, type: n.type, degree: n.degree || 0, x: 0, y: 0, vx: 0, vy: 0 };
+        });
+        var byId = {};
+        nodes.forEach(function(n){ byId[n.id] = n; });
+        var edges = [];
+        rawEdges.forEach(function(e){
+          var s = byId[e.source], t = byId[e.target];
+          if (s && t) edges.push({ s: s, t: t, predicate: e.predicate });
+        });
+        var adj = {};
+        nodes.forEach(function(n){ adj[n.id] = []; });
+        edges.forEach(function(e){ adj[e.s.id].push(e); adj[e.t.id].push(e); });
+
+        var palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
+        var typeColor = {};
+        nodes.forEach(function(n){ if (!(n.type in typeColor)) typeColor[n.type] = palette[Object.keys(typeColor).length % palette.length]; });
+        legendEl.innerHTML = Object.keys(typeColor).map(function(t){
+          return '<span class="legend-item"><span class="legend-dot" style="background:' + typeColor[t] + '"></span>' + esc(t) + '</span>';
+        }).join('');
+
+        var W = 0, H = 0;
+        function resize(){
+          W = wrap.clientWidth; H = wrap.clientHeight;
+          canvas.width = W * dpr; canvas.height = H * dpr;
+          canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+          render();
+        }
+        window.addEventListener('resize', resize);
+
+        var margin = 60;
+        nodes.forEach(function(n){
+          n.x = margin + Math.random() * Math.max(1, W - 2 * margin);
+          n.y = margin + Math.random() * Math.max(1, H - 2 * margin);
+        });
+
+        var view = { x: 0, y: 0, scale: 1 };
+        var draggingNode = null, panning = false, hoverNode = null, moved = false;
+        var lastX = 0, lastY = 0;
+
+        function radius(n){ return Math.max(6, Math.min(22, 5 + Math.sqrt(n.degree) * 2.6)); }
+
+        function step(){
+          var k = 9000, rest = 110, gravity = 0.02, damp = 0.82, maxSpeed = 5;
+          for (var i = 0; i < nodes.length; i++){
+            var a = nodes[i];
+            for (var j = i + 1; j < nodes.length; j++){
+              var b = nodes[j];
+              var dx = a.x - b.x, dy = a.y - b.y;
+              var d2 = dx * dx + dy * dy + 1;
+              var d = Math.sqrt(d2);
+              var f = k / d2;
+              a.vx += dx / d * f; a.vy += dy / d * f;
+              b.vx -= dx / d * f; b.vy -= dy / d * f;
+            }
+          }
+          edges.forEach(function(e){
+            var dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
+            var d = Math.sqrt(dx * dx + dy * dy) || 1;
+            var f = (d - rest) * 0.006;
+            e.s.vx += dx / d * f; e.s.vy += dy / d * f;
+            e.t.vx -= dx / d * f; e.t.vy -= dy / d * f;
+          });
+          nodes.forEach(function(a){
+            if (a === draggingNode) return;
+            a.vx += (W / 2 - a.x) * gravity;
+            a.vy += (H / 2 - a.y) * gravity;
+            a.vx *= damp; a.vy *= damp;
+            var sp = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+            if (sp > maxSpeed){ a.vx *= maxSpeed / sp; a.vy *= maxSpeed / sp; }
+            a.x += a.vx; a.y += a.vy;
+          });
+        }
+
+        function worldPos(clientX, clientY){
+          var rect = canvas.getBoundingClientRect();
+          return { x: (clientX - rect.left - view.x) / view.scale, y: (clientY - rect.top - view.y) / view.scale };
+        }
+
+        function pickNode(wx, wy){
+          for (var i = nodes.length - 1; i >= 0; i--){
+            var n = nodes[i], r = radius(n) + 3;
+            var dx = n.x - wx, dy = n.y - wy;
+            if (dx * dx + dy * dy <= r * r) return n;
+          }
+          return null;
+        }
+
+        function render(){
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.x, dpr * view.y);
+          edges.forEach(function(e){
+            var dim = hoverNode && e.s !== hoverNode && e.t !== hoverNode;
+            ctx.strokeStyle = dim ? 'rgba(180,190,200,.18)' : 'rgba(150,165,180,.55)';
+            ctx.lineWidth = dim ? 0.6 : 1.1;
+            ctx.beginPath(); ctx.moveTo(e.s.x, e.s.y); ctx.lineTo(e.t.x, e.t.y); ctx.stroke();
+          });
+          nodes.forEach(function(n){
+            var r = radius(n);
+            ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+            ctx.fillStyle = typeColor[n.type] || '#999';
+            ctx.fill();
+            ctx.lineWidth = hoverNode === n ? 2.5 : 1;
+            ctx.strokeStyle = hoverNode === n ? '#111' : 'rgba(0,0,0,.25)';
+            ctx.stroke();
+            ctx.fillStyle = '#222';
+            ctx.font = (hoverNode === n ? 'bold ' : '') + '12px "Segoe UI","Microsoft YaHei",sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(n.name, n.x, n.y + r + 3);
+          });
+        }
+
+        var active = true;
+        function frame(){
+          if (active || draggingNode || panning){
+            step();
+            var maxV = 0;
+            nodes.forEach(function(n){ var s = n.vx * n.vx + n.vy * n.vy; if (s > maxV) maxV = s; });
+            active = maxV > 0.05;
+          }
+          render();
+          requestAnimationFrame(frame);
+        }
+
+        function showTip(n, clientX, clientY){
+          tip.innerHTML = '<b>' + esc(n.name) + '</b> · ' + esc(n.type) + ' · ' + n.degree + ' 条关系';
+          tip.style.display = 'block';
+          tip.style.left = (clientX - wrap.getBoundingClientRect().left + 14) + 'px';
+          tip.style.top = (clientY - wrap.getBoundingClientRect().top + 14) + 'px';
+        }
+        function hideTip(){ tip.style.display = 'none'; }
+
+        function showDetail(n){
+          var html = '<div class="detail-title"><b>' + esc(n.name) + '</b> <span class="tag">' + esc(n.type) + '</span> <span class="muted">' + n.degree + ' 条关系</span></div>';
+          var rels = adj[n.id].map(function(e){
+            if (e.s.id === n.id) return '<div class="rel"><span class="pred">' + esc(e.predicate) + '</span>→ ' + esc(e.t.name) + '</div>';
+            return '<div class="rel">' + esc(e.s.name) + ' <span class="pred">' + esc(e.predicate) + '</span>→ 当前实体</div>';
+          });
+          detail.innerHTML = html + (rels.join('') || '<div class="muted">无关联关系</div>');
+        }
+
+        canvas.addEventListener('mousedown', function(ev){
+          moved = false;
+          var wp = worldPos(ev.clientX, ev.clientY);
+          var n = pickNode(wp.x, wp.y);
+          if (n) draggingNode = n; else panning = true;
+          lastX = ev.clientX; lastY = ev.clientY;
+          canvas.classList.add('dragging');
+          ev.preventDefault();
+        });
+        window.addEventListener('mousemove', function(ev){
+          if (draggingNode){
+            var wp = worldPos(ev.clientX, ev.clientY);
+            draggingNode.x = wp.x; draggingNode.y = wp.y;
+            draggingNode.vx = 0; draggingNode.vy = 0;
+            if (Math.abs(ev.clientX - lastX) + Math.abs(ev.clientY - lastY) > 2) moved = true;
+            lastX = ev.clientX; lastY = ev.clientY;
+            return;
+          }
+          if (panning){
+            view.x += ev.clientX - lastX; view.y += ev.clientY - lastY;
+            if (Math.abs(ev.clientX - lastX) + Math.abs(ev.clientY - lastY) > 2) moved = true;
+            lastX = ev.clientX; lastY = ev.clientY;
+            render();
+            return;
+          }
+          var wp = worldPos(ev.clientX, ev.clientY);
+          var n = pickNode(wp.x, wp.y);
+          if (n !== hoverNode){ hoverNode = n; render(); }
+          if (n) showTip(n, ev.clientX, ev.clientY); else hideTip();
+        });
+        window.addEventListener('mouseup', function(){
+          draggingNode = null; panning = false;
+          canvas.classList.remove('dragging');
+        });
+        canvas.addEventListener('click', function(ev){
+          if (moved) return;
+          var wp = worldPos(ev.clientX, ev.clientY);
+          var n = pickNode(wp.x, wp.y);
+          if (n) showDetail(n);
+        });
+        canvas.addEventListener('wheel', function(ev){
+          ev.preventDefault();
+          var factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+          var rect = canvas.getBoundingClientRect();
+          var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+          var newScale = Math.max(0.15, Math.min(6, view.scale * factor));
+          var k = newScale / view.scale;
+          view.x = mx - (mx - view.x) * k;
+          view.y = my - (my - view.y) * k;
+          view.scale = newScale;
+          render();
+        }, { passive: false });
+
+        document.getElementById('graph-reset').addEventListener('click', function(){
+          view.x = 0; view.y = 0; view.scale = 1; hoverNode = null; render();
+        });
+        document.getElementById('graph-search').addEventListener('input', function(ev){
+          var q = (ev.target.value || '').trim().toLowerCase();
+          if (!q){ hoverNode = null; render(); return; }
+          var hit = null;
+          nodes.forEach(function(n){ if (!hit && n.name.toLowerCase().indexOf(q) !== -1) hit = n; });
+          if (hit){
+            view.x = W / 2 - hit.x * view.scale;
+            view.y = H / 2 - hit.y * view.scale;
+            hoverNode = hit;
+            render();
+            showDetail(hit);
+          }
+        });
+
+        resize();
+        requestAnimationFrame(frame);
+      }
+    })();
+    </script>
+    """
+    return _page(body)
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.json.ensure_ascii = False
@@ -356,6 +653,18 @@ def create_app() -> Flask:
     @app.get("/memories")
     def memories() -> str:
         return render_memories()
+
+    @app.get("/graph")
+    def graph() -> str:
+        return render_graph()
+
+    @app.get("/api/graph")
+    def api_graph() -> Any:
+        try:
+            kg_engine.init()
+            return jsonify(kg_engine.export_graph())
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 500
 
     @app.post("/api/memories/delete")
     def api_memory_delete() -> Any:
