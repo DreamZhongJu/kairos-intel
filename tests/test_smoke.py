@@ -14,7 +14,11 @@ from kairos.tools import docs
 class AssistantSmokeTests(unittest.TestCase):
     def test_all_registered_tools_are_langchain_tools(self) -> None:
         self.assertEqual(len(runtime.NATIVE_TOOLS), 25)
-        self.assertTrue(all(getattr(tool, "name", "") for tool in runtime.NATIVE_TOOLS))
+        names = [getattr(tool, "name", "") for tool in runtime.NATIVE_TOOLS]
+        self.assertTrue(all(names))
+        # Regression guard: a duplicate name means one tool silently shadows
+        # another in the OpenAI tool payload sent to the model.
+        self.assertEqual(len(names), len(set(names)))
         self.assertTrue(all(hasattr(tool, "invoke") for tool in runtime.NATIVE_TOOLS))
 
     def test_graph_builds_without_production_credentials(self) -> None:

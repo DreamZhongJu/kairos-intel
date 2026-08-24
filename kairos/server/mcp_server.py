@@ -110,7 +110,7 @@ def knowledge_graph_query(entity: str) -> str:
 @mcp.tool()
 def knowledge_search(query: str) -> str:
     """Keyword-search local ingested knowledge chunks."""
-    return kg_tools.native_knowledge_search(query)
+    return kg_tools.native_local_knowledge_search(query)
 
 
 @mcp.tool()

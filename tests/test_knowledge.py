@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kairos.knowledge import engine  # noqa: E402
 from kairos.knowledge import extract as kg_extract  # noqa: E402
+from kairos.knowledge import tools as kg_tools  # noqa: E402
 
 
 class ExtractionTest(unittest.TestCase):
@@ -165,6 +166,26 @@ class KnowledgeGraphTest(unittest.TestCase):
         c = engine.upsert_entity("Roguelike", "领域")
         self.assertEqual(a, b)
         self.assertEqual(a, c)
+
+    def test_search_entities_fuzzy(self) -> None:
+        engine.upsert_entity("本地服务端", "项目")
+        engine.upsert_entity("FastAPI", "技术")
+        hits = engine.search_entities("服务端")
+        self.assertEqual([h["name"] for h in hits], ["本地服务端"])
+        self.assertEqual(engine.search_entities(""), [])
+
+    def test_graph_tool_fuzzy_fallback(self) -> None:
+        engine.add_relation("本地服务端", "基于", "Python")
+        # Single fuzzy candidate -> auto-resolved and queried.
+        out = kg_tools.native_knowledge_graph_query.invoke({"entity": "本地服务"})
+        self.assertIn("本地服务端", out)
+        self.assertIn("基于", out)
+        # Multiple candidates -> the tool lists them instead of guessing.
+        engine.add_relation("开源服务端项目", "使用", "Java")
+        out2 = kg_tools.native_knowledge_graph_query.invoke({"entity": "服务端"})
+        self.assertIn("候选", out2)
+        self.assertIn("本地服务端", out2)
+        self.assertIn("开源服务端项目", out2)
 
     def test_dedupe_aliases_merges_legacy_rows(self) -> None:
         import sqlite3

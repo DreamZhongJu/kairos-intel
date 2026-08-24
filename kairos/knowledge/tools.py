@@ -59,12 +59,22 @@ def native_knowledge_ingest(text: str, title: str = "") -> str:
 def native_knowledge_graph_query(entity: str) -> str:
     """查询知识图谱中某个实体的关联关系（1-2 跳）。"""
     engine.init()
-    return _format_graph(engine.graph_query(entity))
+    result = engine.graph_query(entity)
+    if not result.get("found"):
+        # Exact (alias-aware) lookup missed: offer fuzzy candidates so the
+        # model can re-query with a name that actually exists in the graph.
+        candidates = engine.search_entities(entity)
+        if len(candidates) == 1:
+            result = engine.graph_query(candidates[0]["name"])
+        elif candidates:
+            names = "、".join(c["name"] for c in candidates[:8])
+            return f"图谱中没有叫「{entity}」的实体，最接近的候选：{names}。请用确切名称再查一次。"
+    return _format_graph(result)
 
 
-@tool("knowledge_search")
-def native_knowledge_search(query: str) -> str:
-    """检索本地已入库的知识片段（关键词匹配）。"""
+@tool("local_knowledge_search")
+def native_local_knowledge_search(query: str) -> str:
+    """检索本地已入库的知识片段（关键词匹配，区别于飞书云文档的 knowledge_search）。"""
     query = (query or "").strip()
     if not query:
         return "请输入检索关键词。"

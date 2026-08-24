@@ -232,6 +232,22 @@ def find_entity(name: str) -> dict | None:
         con.close()
 
 
+def search_entities(keyword: str, limit: int = 8) -> list[dict[str, Any]]:
+    """Fuzzy-match entity names for when an exact graph lookup misses."""
+    kw = _normalize(keyword)
+    if not kw:
+        return []
+    con = _connect()
+    try:
+        rows = con.execute(
+            "SELECT id, name, type FROM entities WHERE canonical LIKE ? OR name LIKE ? ORDER BY id LIMIT ?",
+            (f"%{kw}%", f"%{kw}%", int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
 def graph_query(entity: str, depth: int = 2, limit: int = 40) -> dict[str, Any]:
     """Return the entity's 1-2 hop neighborhood as nodes + edges."""
     entity_row = find_entity(entity)

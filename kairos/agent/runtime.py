@@ -45,7 +45,7 @@ from kairos.tools.skills_loader import native_skill_list, native_skill_load
 from kairos.knowledge.tools import (
     native_knowledge_graph_query,
     native_knowledge_ingest,
-    native_knowledge_search,
+    native_local_knowledge_search,
 )
 from kairos.tools.text import plain_text
 from kairos.tools import mcp_client
@@ -244,7 +244,7 @@ NATIVE_TOOLS = [
     native_skill_load,
     native_knowledge_ingest,
     native_knowledge_graph_query,
-    native_knowledge_search,
+    native_local_knowledge_search,
 ]
 NATIVE_OPENAI_TOOLS = [convert_to_openai_tool(item) for item in NATIVE_TOOLS]
 
@@ -266,7 +266,7 @@ Citations: if this answer relied on any links returned by tools, close the reply
 
 External skills: call skill_list to see what skills are available, then skill_load with the exact name to read the full instructions. When a task matches a skill description, follow that skill's instructions step by step using your tools. If skill_list is unavailable, proceed with your normal workflow.
 
-Knowledge graph (offline, no embedding): when the user asks about their own notes, ingested documents, or relations between things (people, institutions, papers, products), prefer the local knowledge tools. Use knowledge_ingest to store new material, knowledge_search for keyword retrieval of stored text, and knowledge_graph_query to see how one entity relates to others. These use only SQLite + keywords, no embedding model."""
+Knowledge graph (offline, no embedding): when the user asks about their own notes, ingested documents, or relations between things (people, institutions, papers, products), prefer the local knowledge tools. Use knowledge_ingest to store new material. Use knowledge_search for the user's authorized Feishu cloud documents and knowledge bases; use local_knowledge_search for keyword retrieval over locally ingested text; use knowledge_graph_query to see how one entity relates to others — if it reports candidate names, re-query with one exact name. These knowledge tools use only SQLite + keywords, no embedding model."""
 
 
 def _as_openai_message(message: BaseMessage) -> dict[str, Any]:
