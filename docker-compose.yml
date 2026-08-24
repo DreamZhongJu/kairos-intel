@@ -9,6 +9,8 @@ services:
         ALL_PROXY: http://127.0.0.1:7890
     container_name: kairos
     restart: unless-stopped
+    ports:
+      - "8095:8095"
     env_file: .env
     environment:
       TZ: Asia/Shanghai
