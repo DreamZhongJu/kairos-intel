@@ -26,6 +26,33 @@ MODEL_NAME = os.getenv("MODEL_NAME", "").strip()
 MODEL_PROXY = os.getenv("MODEL_PROXY", "").strip()
 # SDK-level retries for connection errors / timeouts / 429 / 5xx (flaky proxy).
 MODEL_MAX_RETRIES = max(0, min(int(os.getenv("MODEL_MAX_RETRIES", "3")), 10))
+# Cooldown seconds for a failed provider inside the failover chain.
+MODEL_FAILOVER_COOLDOWN = max(5, int(os.getenv("MODEL_FAILOVER_COOLDOWN", "300")))
+
+
+def _model_fallbacks() -> list[dict[str, str]]:
+    """Parse numbered MODEL_FALLBACK_<n>_* env vars into provider specs."""
+    specs: list[dict[str, str]] = []
+    idx = 1
+    while True:
+        prefix = f"MODEL_FALLBACK_{idx}_"
+        spec = {
+            "provider": os.getenv(prefix + "PROVIDER", "").strip(),
+            "base_url": os.getenv(prefix + "BASE_URL", "").strip(),
+            "api_key": os.getenv(prefix + "API_KEY", "").strip(),
+            "model": os.getenv(prefix + "MODEL", "").strip(),
+            "proxy": os.getenv(prefix + "PROXY", "__inherit__").strip(),
+        }
+        if not (spec["provider"] or spec["base_url"] or spec["model"]):
+            break
+        specs.append(spec)
+        idx += 1
+        if idx > 8:
+            break
+    return specs
+
+
+MODEL_FALLBACKS = _model_fallbacks()
 # Shared token for machine-to-machine knowledge endpoints (empty = allow all).
 KAIROS_API_TOKEN = os.getenv("KAIROS_API_TOKEN", "").strip()
 # Channels exempt from PII desensitization during chat ingestion (comma-separated).

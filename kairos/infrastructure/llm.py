@@ -50,6 +50,19 @@ def resolve_model_config() -> ModelConfig:
     return ModelConfig(base_url=base_url, api_key=api_key, model=model, provider=provider, proxy=settings.MODEL_PROXY)
 
 
+def _http_client_for(proxy: str) -> Any | None:
+    """Build an explicit httpx client for the given proxy policy.
+
+    ``""``/``direct`` → force a direct connection ignoring env proxies;
+    other non-empty values → route through that proxy URL.
+    """
+    import httpx
+
+    if proxy in ("", "direct"):
+        return httpx.Client(trust_env=False, timeout=httpx.Timeout(120.0))
+    return httpx.Client(proxy=proxy, timeout=httpx.Timeout(120.0))
+
+
 def build_client(config: ModelConfig | None = None) -> OpenAI:
     """Return an OpenAI-compatible client (constructed even without a key)."""
     config = config or resolve_model_config()
@@ -57,15 +70,135 @@ def build_client(config: ModelConfig | None = None) -> OpenAI:
     if config.base_url:
         kwargs["base_url"] = config.base_url
     if config.proxy:
-        import httpx
-
-        kwargs["http_client"] = httpx.Client(proxy=config.proxy, timeout=httpx.Timeout(120.0))
+        kwargs["http_client"] = _http_client_for(config.proxy)
     return OpenAI(**kwargs)
 
 
-def build_client_optional(config: ModelConfig | None = None) -> OpenAI | None:
-    """Return a client, or None when no API key is configured (lazy-safe)."""
-    config = config or resolve_model_config()
+# --- Failover chain ---------------------------------------------------------
+
+class _ChatNamespace:
+    """Duck-typed ``client.chat.completions`` surface for :class:`FailoverClient`."""
+
+    def __init__(self, create_fn):
+        self._create_fn = create_fn
+
+    @property
+    def completions(self) -> "_ChatNamespace":
+        return self
+
+    def create(self, **kwargs: Any):
+        return self._create_fn(**kwargs)
+
+
+class FailoverClient:
+    """Duck-typed chat client that walks a provider chain on failure.
+
+    The first config is the primary; the rest are tried in order when a call
+    fails. A provider that failed enters a cooldown and is skipped until it
+    expires; the last successful provider is sticky so healthy paths are not
+    re-paid for on every call.
+    """
+
+    def __init__(self, configs: list[ModelConfig], cooldown: int | None = None):
+        from time import time as _now
+
+        self._configs = [c for c in configs if c.api_key]
+        if not self._configs:
+            raise ValueError("failover chain needs at least one configured provider")
+        self._clients: dict[int, OpenAI] = {}
+        self._sticky = 0
+        self._cooldown_until = [0.0] * len(self._configs)
+        self._cooldown = cooldown if cooldown is not None else settings.MODEL_FAILOVER_COOLDOWN
+        self._now = _now
+        self.max_retries = 1  # informational; real retries live per-SDK-client
+
+    def _sdk(self, idx: int) -> OpenAI:
+        client = self._clients.get(idx)
+        if client is None:
+            cfg = self._configs[idx]
+            kwargs: dict[str, Any] = {"api_key": cfg.api_key, "max_retries": 1}
+            if cfg.base_url:
+                kwargs["base_url"] = cfg.base_url
+            if cfg.proxy:
+                kwargs["http_client"] = _http_client_for(cfg.proxy)
+            client = OpenAI(**kwargs)
+            self._clients[idx] = client
+        return client
+
+    def create(self, **kwargs: Any):
+        now = self._now()
+        order = [self._sticky] + [i for i in range(len(self._configs)) if i != self._sticky]
+        last_exc: Exception | None = None
+        attempted_any = False
+        for idx in order:
+            if self._cooldown_until[idx] > now:
+                continue
+            attempted_any = True
+            try:
+                call_kwargs = dict(kwargs)
+                call_kwargs["model"] = self._configs[idx].model
+                response = self._sdk(idx).chat.completions.create(**call_kwargs)
+                self._sticky = idx
+                return response
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                self._cooldown_until[idx] = self._now() + self._cooldown
+        if not attempted_any and last_exc is None:
+            # everything cooling down: force-try the sticky one rather than die
+            try:
+                call_kwargs = dict(kwargs)
+                call_kwargs["model"] = self._configs[self._sticky].model
+                return self._sdk(self._sticky).chat.completions.create(**call_kwargs)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        raise last_exc or RuntimeError("no model provider available")
+
+    @property
+    def chat(self) -> _ChatNamespace:
+        return _ChatNamespace(self.create)
+
+    def model_name(self) -> str:
+        return self._configs[self._sticky].model
+
+
+def resolve_chain() -> list[ModelConfig]:
+    """Primary model config plus any MODEL_FALLBACK_<n>_* providers."""
+    chain = [resolve_model_config()]
+    seen = {(c.base_url, c.model) for c in chain}
+    for spec in settings.MODEL_FALLBACKS:
+        preset = PROVIDER_PRESETS.get(spec["provider"], {})
+        base_url = spec["base_url"] or preset.get("base_url", "")
+        api_key = spec["api_key"] or os.getenv(preset.get("env_key", ""), "").strip()
+        model = spec["model"]
+        proxy = spec["proxy"]
+        if proxy == "__inherit__":
+            proxy = settings.MODEL_PROXY
+        elif proxy in ("none", "direct"):
+            proxy = "direct"
+        if not api_key or not model:
+            continue
+        cfg = ModelConfig(base_url=base_url, api_key=api_key, model=model,
+                          provider=spec["provider"] or "custom", proxy=proxy)
+        if (cfg.base_url, cfg.model) not in seen:
+            chain.append(cfg)
+            seen.add((cfg.base_url, cfg.model))
+    return chain
+
+
+def build_client_optional(config: ModelConfig | None = None) -> OpenAI | FailoverClient | None:
+    """Return a client, or None when no API key is configured (lazy-safe).
+
+    When MODEL_FALLBACK_<n>_* providers are configured this returns a
+    :class:`FailoverClient` covering the whole chain; callers keep using the
+    plain ``client.chat.completions.create(...)`` interface unchanged.
+    """
+    if config is None and settings.MODEL_FALLBACKS:
+        chain = resolve_chain()
+        if len(chain) > 1:
+            return FailoverClient(chain)
+        config = chain[0]
+    else:
+        config = config or resolve_model_config()
     if not config.api_key:
         return None
     return build_client(config)
@@ -122,4 +255,7 @@ def role_client(role: str) -> tuple[OpenAI | None, str]:
         provider=provider or "default",
         proxy=settings.MODEL_PROXY,
     )
+    if settings.MODEL_FALLBACKS:
+        chain = [cfg] + [c for c in resolve_chain() if (c.base_url, c.model) != (cfg.base_url, cfg.model)]
+        return FailoverClient(chain), cfg.model
     return build_client_optional(cfg), cfg.model
