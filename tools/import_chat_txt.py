@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -31,7 +32,7 @@ MARKER_RE = re.compile(r"^\[(图片|表情|语音|视频|文件|动画表情|链
 MARKER_BLOCK_RE = re.compile(r"^\[(图片|表情|语音|视频|文件|动画表情|闪照|视频)\b")
 GAP_MINUTES = 30
 WINDOW_CAP = 240
-API = "http://192.168.10.13:8095/api/knowledge/ingest"
+API = os.getenv("KAIROS_IMPORT_API", "http://192.168.10.13:8095/api/knowledge/ingest")
 CHECKPOINT = Path("data/import_checkpoint.json")
 NICKMAP_PATH = Path("data/nickmap.json")
 
@@ -60,7 +61,7 @@ def detect_format(text: str) -> str:
 
 # --- desktop format parser ----------------------------------------------
 
-def parse_desktop(text: str) -> list[dict]:
+def parse_desktop(text: str, legacy: bool = False) -> list[dict]:
     messages: list[dict] = []
     cur: dict | None = None
     for line in text.splitlines():
@@ -82,7 +83,7 @@ def parse_desktop(text: str) -> list[dict]:
         cur["_lines"].append(stripped)
     if cur and cur["_lines"]:
         messages.append(cur)
-    return _finalize(messages)
+    return _finalize(messages, legacy=legacy)
 
 
 # --- QQChatExporter V5 parser -------------------------------------------
@@ -132,11 +133,20 @@ def parse_qqce(text: str, nickmap: dict[str, str]) -> list[dict]:
     return _finalize(messages, nickmap)
 
 
-def _finalize(messages: list[dict], nickmap: dict[str, str] | None = None) -> list[dict]:
+def _finalize(messages: list[dict], nickmap: dict[str, str] | None = None, legacy: bool = False) -> list[dict]:
     nickmap = nickmap or {}
     out = []
     dropped = 0
     for msg in messages:
+        if legacy:
+            # exact pre-refactor behavior so existing checkpoints stay aligned
+            lines = [ln for ln in msg["_lines"] if not re.match(r"^\[(图片|表情|语音|视频|文件|动画表情|链接|卡片)\]$", ln)]
+            body = "\n".join(lines).strip()
+            if not body or not msg["user_id"]:
+                dropped += 1
+                continue
+            out.append({"time": msg["time"], "user_id": msg["user_id"], "nickname": msg["nickname"], "text": body})
+            continue
         lines = [ln for ln in msg["_lines"] if not MARKER_RE.match(ln) and not MARKER_BLOCK_RE.match(ln)]
         # drop resource-list residue lines ("资源: N 个文件", "- image: ...")
         lines = [ln for ln in lines if not ln.startswith(("资源:", "- image", "- video", "- file"))]
@@ -153,14 +163,14 @@ def _finalize(messages: list[dict], nickmap: dict[str, str] | None = None) -> li
     return out
 
 
-def parse_messages(text: str, nickmap: dict[str, str] | None = None) -> list[dict]:
+def parse_messages(text: str, nickmap: dict[str, str] | None = None, legacy: bool = False) -> list[dict]:
     fmt = detect_format(text)
     if fmt == "qqce":
         return parse_qqce(text, nickmap or {})
-    return parse_desktop(text)
+    return parse_desktop(text, legacy)
 
 
-def split_windows(messages: list[dict]) -> list[list[dict]]:
+def split_windows(messages: list[dict], cap: int = WINDOW_CAP, gap_min: int = GAP_MINUTES) -> list[list[dict]]:
     def ts(m: dict) -> float:
         return time.mktime(time.strptime(m["time"], "%Y-%m-%d %H:%M:%S"))
 
@@ -169,14 +179,13 @@ def split_windows(messages: list[dict]) -> list[list[dict]]:
     for msg in messages:
         if current:
             gap = (ts(msg) - ts(current[-1])) / 60.0
-            if gap > GAP_MINUTES or len(current) >= WINDOW_CAP:
+            if gap > gap_min or len(current) >= cap:
                 if len(current) >= 2:
                     windows.append(current)
                 current = []
         current.append(msg)
     if len(current) >= 2:
         windows.append(current)
-    # merge any trailing tiny window into the previous one to avoid losing it
     if windows and len(windows[-1]) < 2 and len(windows) >= 2:
         windows[-2].extend(windows.pop())
     return windows
@@ -192,20 +201,24 @@ def post_window(channel_id: str, window: list[dict]) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def load_checkpoint(channel_id: str) -> set:
-    p = Path(f"data/import_checkpoint_{channel_id}.json")
+def load_checkpoint(channel_id: str, cap: int) -> set:
+    p = Path(f"data/import_checkpoint_{channel_id}_{cap}.json")
     if p.exists():
         return set(json.loads(p.read_text()))
-    # legacy shared file (from the first import)
-    if CHECKPOINT.exists():
+    # legacy shared file from the first (cap=60) import run
+    if cap == 60 and CHECKPOINT.exists():
         return set(json.loads(CHECKPOINT.read_text()))
     return set()
 
 
-def save_checkpoint(channel_id: str, done: set) -> None:
-    p = Path(f"data/import_checkpoint_{channel_id}.json")
+def save_checkpoint(channel_id: str, cap: int, done: set) -> None:
+    p = Path(f"data/import_checkpoint_{channel_id}_{cap}.json")
     p.parent.mkdir(exist_ok=True)
     p.write_text(json.dumps(sorted(done)))
+
+
+def _flag(name: str, default: int) -> int:
+    return next((int(a.split("=")[1]) for a in sys.argv if a.startswith(f"--{name}=")), default)
 
 
 def main() -> None:
@@ -213,21 +226,23 @@ def main() -> None:
     text = read_text(path)
     nickmap = load_nickmap()
     fmt = detect_format(text)
-    print(f"format: {fmt} | nickmap: {len(nickmap)} entries")
-    messages = parse_messages(text, nickmap)
+    cap = _flag("cap", WINDOW_CAP)
+    gap = _flag("gap", GAP_MINUTES)
+    legacy = any(a == "--legacy-parse" for a in sys.argv)
+    print(f"format: {fmt} | nickmap: {len(nickmap)} | cap={cap} gap>{gap}min" + (" | legacy-parse" if legacy else ""))
+    messages = parse_messages(text, nickmap, legacy=legacy)
     print(f"parsed {len(messages)} messages from {path}")
+    windows = split_windows(messages, cap=cap, gap_min=gap)
     if mode == "stats":
-        windows = split_windows(messages)
         spans = [(w[0]["time"], w[-1]["time"]) for w in windows[:3]]
-        print(f"windows: {len(windows)} (cap={WINDOW_CAP}, gap>{GAP_MINUTES}min)")
+        print(f"windows: {len(windows)}")
         print(f"first windows span: {spans}")
         uids = {m['user_id'] for m in messages}
         print(f"unique senders: {len(uids)}")
         return
     channel_id = sys.argv[3]
-    workers = next((int(a.split('=')[1]) for a in sys.argv[4:] if a.startswith('--workers=')), 4)
-    windows = split_windows(messages)
-    done = load_checkpoint(channel_id)
+    workers = _flag("workers", 4)
+    done = load_checkpoint(channel_id, cap)
     todo = [(i, w) for i, w in enumerate(windows) if i not in done]
     print(f"importing {len(todo)}/{len(windows)} windows with {workers} workers -> {API}")
 
@@ -241,7 +256,7 @@ def main() -> None:
                 fut.result()
                 ok += 1
                 done.add(i)
-                save_checkpoint(channel_id, done) if ok % 5 == 0 else None
+                save_checkpoint(channel_id, cap, done) if ok % 5 == 0 else None
             except Exception as exc:  # noqa: BLE001
                 err += 1
                 print(f"[ERR] window {i} ({w[0]['time']}): {exc}", flush=True)
@@ -251,7 +266,7 @@ def main() -> None:
                 eta = (len(todo) - total_done) / max(rate / 60, 1e-9) / 60
                 print(f"progress {total_done}/{len(todo)} ok={ok} err={err} "
                       f"{rate:.1f} win/min eta={eta:.0f}min", flush=True)
-    save_checkpoint(channel_id, done)
+    save_checkpoint(channel_id, cap, done)
     print(f"DONE ok={ok} err={err} elapsed={(time.time()-t0)/60:.1f}min")
 
 
