@@ -173,35 +173,36 @@ def link_mention(cid: int, eid: int) -> None:
 
 
 def search(keyword: str, limit: int = 8) -> list[dict[str, Any]]:
-    """Fulltext entity search with one-hop context — the Cypher workhorse."""
+    """Entity lookup by substring (CJK-safe) with one-hop context."""
     cypher = (
-        "CALL db.index.fulltext.queryNodes('entity_name_ft', $kw + '~') YIELD node, score "
-        "OPTIONAL MATCH (node)-[r]-(other) "
-        "WITH node, score, collect({pred: type(r), other: other.name})[0..6] AS ctx "
-        "RETURN node.id AS id, node.name AS name, node.type AS type, score, ctx "
-        "ORDER BY score DESC LIMIT $limit"
+        "MATCH (e:Entity) WHERE e.name CONTAINS $kw "
+        "WITH e, count { (e)--() } AS deg "
+        "OPTIONAL MATCH (e)-[r]-(other) "
+        "WITH e, deg, collect({pred: type(r), other: other.name})[0..6] AS ctx "
+        "RETURN e.id AS id, e.name AS name, e.type AS type, deg, ctx "
+        "ORDER BY deg DESC LIMIT $limit"
     )
     with _driver().session() as s:
-        rows = s.run(cypher, kw=keyword, limit=limit).data()
+        rows = s.run(cypher, kw=keyword.strip(), limit=limit).data()
+    for row in rows:
+        row["ctx"] = [c for c in row["ctx"] if c.get("other")]
     return rows
 
 
 def neighborhood(name: str, hops: int = 2, limit: int = 40) -> dict[str, Any]:
-    """N-hop subgraph around the best name match."""
-    match_q = (
-        "CALL db.index.fulltext.queryNodes('entity_name_ft', $name + '~') YIELD node, score "
-        "RETURN element_id(node) AS eid, node.name AS name ORDER BY score DESC LIMIT 1"
+    """N-hop subgraph around the closest name match — single Cypher query."""
+    q = (
+        "MATCH (c:Entity) WHERE c.name CONTAINS $name "
+        "WITH c ORDER BY size(c.name) ASC LIMIT 1 "
+        "MATCH (c)-[rels*1.." + str(max(1, min(hops, 3))) + "]-(n) "
+        "UNWIND rels AS r "
+        "WITH DISTINCT startNode(r) AS a, r AS edge, endNode(r) AS b "
+        "RETURN a.name AS src, coalesce(edge.predicate, type(edge)) AS pred, b.name AS dst, "
+        "count { (a)--() } AS w ORDER BY w DESC LIMIT $limit"
     )
     with _driver().session() as s:
-        hit = s.run(match_q, name=name).single()
-        if not hit:
-            return {"found": False}
-        q = (
-            "MATCH (c)-[rels*1.." + str(max(1, min(hops, 3))) + "]-(n) "
-            "WHERE element_id(c)=$eid "
-            "UNWIND rels AS r "
-            "WITH DISTINCT startNode(r) AS a, type(r) AS pred, endNode(r) AS b "
-            "RETURN a.name AS src, pred, b.name AS dst LIMIT $limit"
-        )
-        edges = s.run(q, eid=hit["eid"], limit=limit).data()
-        return {"found": bool(edges), "center": hit["name"], "edges": edges}
+        edges = s.run(q, name=name.strip(), limit=limit).data()
+    if not edges:
+        return {"found": False}
+    center = min((e["src"] for e in edges), key=len)
+    return {"found": True, "center": center, "edges": edges}
