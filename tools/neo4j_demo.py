@@ -14,7 +14,7 @@ with graph_store._driver().session() as s:
 for r in rows:
     print(f"  {r['n']} [{r['t']}] 度={r['deg']}")
 
-kw = sys.argv[1] if len(sys.argv) > 1 else (rows[0]["n"] if rows else "")
+kw = sys.argv[1] if len(sys.argv) > 1 else "东方"
 print(f"\n== 实体检索 '{kw}' ==")
 hits = graph_store.search(kw, limit=4)
 for h in hits:
