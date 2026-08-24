@@ -190,18 +190,18 @@ def neighborhood(name: str, hops: int = 2, limit: int = 40) -> dict[str, Any]:
     """N-hop subgraph around the best name match."""
     match_q = (
         "CALL db.index.fulltext.queryNodes('entity_name_ft', $name + '~') YIELD node, score "
-        "RETURN node ORDER BY score DESC LIMIT 1"
+        "RETURN element_id(node) AS eid, node.name AS name ORDER BY score DESC LIMIT 1"
     )
     with _driver().session() as s:
         hit = s.run(match_q, name=name).single()
         if not hit:
             return {"found": False}
-        center = hit["node"]
         q = (
-            "MATCH path = (c)-[rels*1.." + str(max(1, min(hops, 3))) + "]-(n) "
-            "WHERE id(c)=$cid "
+            "MATCH (c)-[rels*1.." + str(max(1, min(hops, 3))) + "]-(n) "
+            "WHERE element_id(c)=$eid "
             "UNWIND rels AS r "
-            "RETURN DISTINCT startNode(r).name AS src, type(r) AS pred, endNode(r).name AS dst LIMIT $limit"
+            "WITH DISTINCT startNode(r) AS a, type(r) AS pred, endNode(r) AS b "
+            "RETURN a.name AS src, pred, b.name AS dst LIMIT $limit"
         )
-        edges = s.run(q, cid=center.element_id if hasattr(center, 'element_id') else center.id, limit=limit).data()
-        return {"found": True, "center": center["name"], "edges": edges}
+        edges = s.run(q, eid=hit["eid"], limit=limit).data()
+        return {"found": bool(edges), "center": hit["name"], "edges": edges}
