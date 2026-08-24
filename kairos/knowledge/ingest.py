@@ -12,8 +12,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from kairos.infrastructure import settings
 from kairos.knowledge import engine
 from kairos.knowledge import extract as kg_extract
+from kairos.knowledge.privacy import pseudonymize_messages
 
 LOG = logging.getLogger("kairos.knowledge.ingest")
 
@@ -53,6 +55,10 @@ def ingest_chat_window(
         raise ValueError("channel_id required")
     if len(msgs) < 2:
         raise ValueError("需要至少 2 条消息组成一个窗口")
+
+    # Privacy gate: non-exempt channels get nicknames pseudonymized, mentions
+    # rewritten and identity literals masked BEFORE storage or any LLM call.
+    msgs = pseudonymize_messages(channel_id, msgs, settings.PRIVACY_EXEMPT_GROUPS)
 
     engine.init()
 

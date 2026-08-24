@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kairos.knowledge import engine  # noqa: E402
 from kairos.knowledge import extract as kg_extract  # noqa: E402
 from kairos.knowledge import ingest as kg_ingest  # noqa: E402
+from kairos.knowledge import privacy as kg_privacy  # noqa: E402
 from kairos.knowledge import tools as kg_tools  # noqa: E402
 
 
@@ -296,6 +297,70 @@ class ChatIngestTest(unittest.TestCase):
             self.assertIn("【图谱关联】", out["answer"])
             miss = kg_ingest.query_knowledge(entity="不存在的玩意")
             self.assertFalse(miss["graph"]["found"])
+
+
+class PrivacySanitizeTest(unittest.TestCase):
+    EXEMPT = {"830070676"}
+
+    def test_mask_text_patterns(self) -> None:
+        text = (
+            "我身份证是110101199003077578，手机13812345678，"
+            "邮箱a.b@test.org，卡号6222020200112233445，QQ号12345没事"
+        )
+        out = kg_privacy.mask_text(text)
+        self.assertNotIn("110101199003077578", out)
+        self.assertNotIn("13812345678", out)
+        self.assertNotIn("a.b@test.org", out)
+        self.assertNotIn("6222020200112233445", out)
+        self.assertIn("[已脱敏]", out)
+        self.assertIn("12345", out)  # short ids untouched
+
+    def test_exempt_group_untouched(self) -> None:
+        msgs = [{"user_id": "1", "nickname": "张三", "text": "手机13812345678"}]
+        out = kg_privacy.pseudonymize_messages("830070676", msgs, self.EXEMPT)
+        self.assertEqual(out[0]["nickname"], "张三")
+        self.assertIn("13812345678", out[0]["text"])
+
+    def test_non_exempt_group_sanitized(self) -> None:
+        msgs = [
+            {"user_id": "100", "nickname": "张三", "text": "大家好"},
+            {"user_id": "200", "nickname": "李四", "text": "@张三 我身份证110101199003077578 手机13900001111"},
+            {"user_id": "300", "nickname": "", "text": "收到"},
+        ]
+        out = kg_privacy.pseudonymize_messages("999888777", msgs, self.EXEMPT)
+        self.assertEqual(out[0]["nickname"], "群成员100")
+        self.assertNotIn("张三", out[1]["text"])  # @mention rewritten
+        self.assertNotIn("李四", str(out))
+        self.assertNotIn("110101199003077578", out[1]["text"])
+        self.assertNotIn("13900001111", out[1]["text"])
+
+    def test_ingest_applies_privacy_gate_end_to_end(self) -> None:
+        import sqlite3
+
+        tmp = Path(tempfile.mkdtemp(prefix="kg_priv_"))
+        with patch.object(engine, "DB_PATH", tmp / "knowledge.db"), patch.object(kg_extract, "llm", None):
+            result = kg_ingest.ingest_chat_window(
+                "999888777",
+                [
+                    {"user_id": "100", "nickname": "张三", "text": "我的手机是13812345678"},
+                    {"user_id": "200", "nickname": "李四", "text": "@张三 好的"},
+                ],
+            )
+            person = engine.find_entity("qq:100")
+            con = sqlite3.connect(str(engine.DB_PATH))
+            try:
+                rows = con.execute(
+                    "SELECT text FROM chunks WHERE doc_id=?",
+                    (result["doc_id"],),
+                ).fetchall()
+            finally:
+                con.close()
+            doc = "\n".join(r[0] for r in rows)
+        self.assertIsNotNone(person)
+        self.assertEqual(person["name"], "群成员100")  # pseudonym, not real name
+        self.assertIn("群成员100", doc)
+        self.assertNotIn("张三", doc)
+        self.assertNotIn("13812345678", doc)
 
 
 if __name__ == "__main__":

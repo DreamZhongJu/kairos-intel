@@ -28,6 +28,10 @@ MODEL_PROXY = os.getenv("MODEL_PROXY", "").strip()
 MODEL_MAX_RETRIES = max(0, min(int(os.getenv("MODEL_MAX_RETRIES", "3")), 10))
 # Shared token for machine-to-machine knowledge endpoints (empty = allow all).
 KAIROS_API_TOKEN = os.getenv("KAIROS_API_TOKEN", "").strip()
+# Channels exempt from PII desensitization during chat ingestion (comma-separated).
+PRIVACY_EXEMPT_GROUPS = {
+    s.strip() for s in os.getenv("PRIVACY_EXEMPT_GROUPS", "830070676").replace("，", ",").split(",") if s.strip()
+}
 RECENT_LIMIT = max(1, min(int(os.getenv("RECENT_MESSAGE_LIMIT", "30")), 50))
 REPORT_DIR = Path(os.getenv("DAILY_REPORT_DIR", str(PROJECT_ROOT / "reports")))
 SKILLS_DIR = Path(os.getenv("SKILLS_DIR", str(PROJECT_ROOT / "skills")))
