@@ -187,6 +187,23 @@ def create_app() -> Flask:
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
 
+    @app.get("/api/knowledge/neo4j")
+    def knowledge_neo4j_status():
+        try:
+            from kairos.knowledge import graph_store
+
+            if not graph_store.available():
+                return jsonify({"neo4j": "unavailable"})
+            with graph_store._driver().session() as s:
+                counts = s.run(
+                    "MATCH (e:Entity) WITH count(e) AS entities "
+                    "OPTIONAL MATCH ()-[r:REL]->() WITH entities, count(r) AS relations "
+                    "OPTIONAL MATCH (c:Chunk) RETURN entities, relations, count(c) AS chunks"
+                ).single()
+            return jsonify({"neo4j": "ok", **dict(counts)})
+        except Exception as exc:
+            return jsonify({"neo4j": "error", "error": str(exc)}), 200
+
     @app.post("/api/knowledge/ingest")
     def knowledge_ingest():
         if not _authorized():

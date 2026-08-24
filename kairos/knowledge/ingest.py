@@ -103,6 +103,14 @@ def ingest_chat_window(
         except Exception:  # noqa: BLE001
             pass
 
+    # Mirror the new data into Neo4j (debounced; no-op when unavailable).
+    try:
+        from kairos.knowledge import graph_sync
+
+        graph_sync.schedule_resync()
+    except Exception:  # noqa: BLE001
+        pass
+
     return {
         "doc_id": doc_id,
         "group": {"id": group_id, "canonical": f"group:{channel_id}"},
@@ -125,13 +133,33 @@ def query_knowledge(q: str = "", entity: str = "", limit: int = 6) -> dict[str, 
     limit = max(1, min(int(limit or 6), 12))
     engine.init()
 
+    # Neo4j mirror first (richer multi-hop context); SQLite fallback below.
+    neo4j_used = False
+    try:
+        from kairos.knowledge import graph_store
+
+        if graph_store.available():
+            neo4j_used = True
+    except Exception:  # noqa: BLE001
+        neo4j_used = False
+
     chunks: list[dict[str, Any]] = []
     if q:
         for hit in engine.keyword_search(q, limit=limit):
             chunks.append({"title": hit.get("title") or "未命名文档", "text": (hit.get("text") or "")[:400]})
 
     graph: dict[str, Any] = {"entity": entity, "found": False, "lines": []}
-    if entity:
+    if entity and neo4j_used:
+        try:
+            from kairos.knowledge import graph_store
+
+            nb = graph_store.neighborhood(entity, hops=2, limit=40)
+            if nb.get("found"):
+                graph["found"] = True
+                graph["lines"] = [f"- {e['src']} --[{e['pred']}]--> {e['dst']}" for e in nb.get("edges", [])]
+        except Exception:  # noqa: BLE001
+            pass
+    if entity and not graph.get("found"):
         result = engine.graph_query(entity)
         if not result.get("found"):
             candidates = engine.search_entities(entity)
