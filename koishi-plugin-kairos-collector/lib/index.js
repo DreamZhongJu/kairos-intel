@@ -34,8 +34,28 @@ exports.apply = (ctx, cfg) => {
   let failStreak = 0
   const pending = new Map()
 
-  const postJson = async (path, data) =>
-    ctx.http.post(cfg.kairosEndpoint + path, data, { headers, timeout: 120000 })
+  // Use the platform fetch directly: ctx.http is proxied by proxy-agent
+  // (clash), which cannot resolve docker-internal names like "kairos".
+  const postJson = async (path, data) => {
+    const res = await fetch(cfg.kairosEndpoint + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(data),
+      signal: AbortSignal.timeout(120000),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    return res.json()
+  }
+
+  const getJson = async (path, params) => {
+    const url = new URL(cfg.kairosEndpoint + path)
+    for (const [k, v] of Object.entries(params || {})) {
+      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
+    }
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
 
   // ---- collection -------------------------------------------------------
   ctx.on('message', async (session) => {
@@ -132,11 +152,7 @@ exports.apply = (ctx, cfg) => {
     .action(async ({ session }, text) => {
       if (!text || !text.trim()) return '用法：kairos.query <关键词或问题>'
       try {
-        const res = await ctx.http.get(cfg.kairosEndpoint + '/api/knowledge/query', {
-          params: { q: text.trim(), limit: 6 },
-          headers,
-          timeout: 30000,
-        })
+        const res = await getJson('/api/knowledge/query', { q: text.trim(), limit: 6 })
         const ans = (res && res.answer) || '没有结果。'
         return ans.length > 1200 ? ans.slice(0, 1200) + '\n…' : ans
       } catch (err) {
@@ -148,7 +164,7 @@ exports.apply = (ctx, cfg) => {
   ctx.command('kairos.status', '查看凯伊知识图谱统计')
     .action(async () => {
       try {
-        const s = await ctx.http.get(cfg.kairosEndpoint + '/api/knowledge/stats', { headers, timeout: 15000 })
+        const s = await getJson('/api/knowledge/stats')
         return `文档 ${s.documents} · 实体 ${s.entities} · 关系 ${s.relations}`
       } catch (err) {
         return '获取失败：' + err.message
