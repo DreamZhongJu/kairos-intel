@@ -39,6 +39,39 @@ class RestApiTest(unittest.TestCase):
         resp = self.client.post("/api/chat", json={})
         self.assertEqual(resp.status_code, 400)
 
+    def test_knowledge_ingest_validation(self) -> None:
+        self.assertEqual(self.client.post("/api/knowledge/ingest", json={}).status_code, 400)
+        resp = self.client.post(
+            "/api/knowledge/ingest",
+            json={"channel_id": "123", "messages": [{"user_id": "1", "text": "only one"}]},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_knowledge_ingest_requires_token_when_configured(self) -> None:
+        from unittest.mock import patch
+
+        from kairos.infrastructure import settings
+
+        with patch.object(settings, "KAIROS_API_TOKEN", "secret"):
+            self.assertEqual(
+                self.client.post("/api/knowledge/ingest", json={"channel_id": "1", "messages": []}).status_code,
+                401,
+            )
+            ok = self.client.post(
+                "/api/knowledge/ingest",
+                headers={"X-Token": "secret"},
+                json={"channel_id": "1", "messages": []},
+            )
+            self.assertEqual(ok.status_code, 400)  # authed, now fails on payload
+
+    def test_knowledge_query_endpoint(self) -> None:
+        resp = self.client.get("/api/knowledge/query?q=anything")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        for key in ("query", "entity", "chunks", "graph", "answer"):
+            self.assertIn(key, data)
+        self.assertIn("answer", data)
+
 
 class McpServerTest(unittest.TestCase):
     def test_tools_registered(self) -> None:

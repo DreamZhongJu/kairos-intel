@@ -38,7 +38,7 @@ model = _extract_model or model_name()
 # clock time roughly linearly (measured ~2.6x at 3 workers vs api.deepseek.com).
 _EXTRACT_WORKERS = max(1, min(int(os.getenv("EXTRACT_WORKERS", "3")), 8))
 
-TYPE_WHITELIST = ("机构", "人名", "论文", "技术", "产品", "会议", "地点", "领域", "事件", "项目")
+TYPE_WHITELIST = ("机构", "人名", "论文", "技术", "产品", "会议", "地点", "领域", "事件", "项目", "群组")
 
 MAX_ENTITIES_PER_CHUNK = 25
 MAX_RELATIONS_PER_CHUNK = 35

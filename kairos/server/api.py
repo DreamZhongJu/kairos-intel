@@ -15,6 +15,7 @@ from flask import Flask, jsonify, request
 from kairos.agent import runtime as agent_runtime
 from kairos.infrastructure import settings
 from kairos.knowledge import engine as kg_engine
+from kairos.knowledge import ingest as kg_ingest
 
 GRAPH: object | None = None
 
@@ -24,6 +25,15 @@ def _graph():
     if GRAPH is None:
         GRAPH = agent_runtime.build_graph()
     return GRAPH
+
+
+def _authorized() -> bool:
+    """Machine-to-machine endpoints accept an optional shared token."""
+    token = settings.KAIROS_API_TOKEN
+    if not token:
+        return True
+    auth = request.headers.get("Authorization", "")
+    return auth == f"Bearer {token}" or request.headers.get("X-Token", "") == token
 
 
 def build_openapi() -> dict:
@@ -75,6 +85,52 @@ def build_openapi() -> dict:
                 "get": {
                     "summary": "知识图谱规模统计",
                     "responses": {"200": {"description": "docs/entities/relations 计数"}},
+                }
+            },
+            "/api/knowledge/ingest": {
+                "post": {
+                    "summary": "批量入库聊天窗口并更新知识图谱（供 Koishi 采集端调用）",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "channel_id": {"type": "string", "description": "群号"},
+                                        "source": {"type": "string", "default": "qq"},
+                                        "title": {"type": "string"},
+                                        "messages": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "user_id": {"type": "string"},
+                                                    "nickname": {"type": "string"},
+                                                    "time": {"type": "string"},
+                                                    "text": {"type": "string"},
+                                                },
+                                                "required": ["user_id", "text"],
+                                            },
+                                        },
+                                    },
+                                    "required": ["channel_id", "messages"],
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "实体/关系/成员统计"}},
+                }
+            },
+            "/api/knowledge/query": {
+                "get": {
+                    "summary": "轻量知识检索（关键词片段 + 图谱子图，毫秒级）",
+                    "parameters": [
+                        {"name": "q", "in": "query", "schema": {"type": "string"}, "description": "关键词"},
+                        {"name": "entity", "in": "query", "schema": {"type": "string"}, "description": "实体名/QQ号"},
+                        {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 6}},
+                    ],
+                    "responses": {"200": {"description": "chunks + graph + answer 文本"}},
                 }
             },
         },
@@ -130,6 +186,45 @@ def create_app() -> Flask:
             return jsonify(kg_engine.stats())
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
+
+    @app.post("/api/knowledge/ingest")
+    def knowledge_ingest():
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
+        data = request.get_json(silent=True) or {}
+        channel_id = str(data.get("channel_id") or data.get("group_id") or "").strip()
+        messages = data.get("messages")
+        if not channel_id:
+            return jsonify({"error": "channel_id required"}), 400
+        if not isinstance(messages, list) or len(messages) < 2:
+            return jsonify({"error": "messages must be a list with at least 2 items"}), 400
+        try:
+            result = kg_ingest.ingest_chat_window(
+                channel_id,
+                messages,
+                source=str(data.get("source") or "qq"),
+                title=str(data.get("title") or ""),
+            )
+            return jsonify(result)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 500
+
+    @app.get("/api/knowledge/query")
+    def knowledge_query():
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
+        try:
+            limit = int(request.args.get("limit", "6"))
+        except ValueError:
+            limit = 6
+        result = kg_ingest.query_knowledge(
+            q=request.args.get("q", ""),
+            entity=request.args.get("entity", ""),
+            limit=limit,
+        )
+        return jsonify(result)
 
     return app
 

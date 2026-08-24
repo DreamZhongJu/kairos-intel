@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kairos.knowledge import engine  # noqa: E402
 from kairos.knowledge import extract as kg_extract  # noqa: E402
+from kairos.knowledge import ingest as kg_ingest  # noqa: E402
 from kairos.knowledge import tools as kg_tools  # noqa: E402
 
 
@@ -187,6 +188,35 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertIn("本地服务端", out2)
         self.assertIn("开源服务端项目", out2)
 
+    def test_upsert_explicit_canonical(self) -> None:
+        a = engine.upsert_entity("小明", "人名", canonical="qq:10001")
+        b = engine.upsert_entity("明明", "人名", canonical="qq:10001")  # rename, same person
+        self.assertEqual(a, b)
+        row = engine.find_entity("qq:10001")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["name"], "明明")  # newest nickname wins
+        # Display-name exact match still resolves to the namespaced node.
+        self.assertEqual(engine.find_entity("明明")["id"], a)
+        g1 = engine.upsert_entity("群830070676", "群组", canonical="group:830070676")
+        self.assertEqual(engine.find_entity("group:830070676")["id"], g1)
+
+    def test_add_relation_by_ids(self) -> None:
+        s = engine.upsert_entity("小明", "人名", canonical="qq:1")
+        o = engine.upsert_entity("群123", "群组", canonical="group:123")
+        self.assertTrue(engine.add_relation_by_ids(s, "活跃于", o))
+        self.assertFalse(engine.add_relation_by_ids(s, "活跃于", o))  # dup ignored
+        self.assertFalse(engine.add_relation_by_ids(s, "自环", s))  # self-loop rejected
+        exported = engine.export_graph()
+        self.assertEqual(exported["stats"]["relations"], 1)
+        self.assertEqual(exported["edges"][0]["predicate"], "活跃于")
+
+    def test_ingest_dedupe_aliases_keeps_namespaced_ids(self) -> None:
+        pid = engine.upsert_entity("小明", "人名", canonical="qq:42")
+        engine.dedupe_aliases()
+        row = engine.find_entity("qq:42")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], pid)  # namespace survives re-canonicalization
+
     def test_dedupe_aliases_merges_legacy_rows(self) -> None:
         import sqlite3
 
@@ -212,6 +242,60 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(exported["stats"]["entities"], 2)
         self.assertEqual(exported["stats"]["relations"], 1)
         self.assertEqual({n["name"] for n in exported["nodes"]}, {"肉鸽", "战斗系统"})
+
+
+class ChatIngestTest(unittest.TestCase):
+    def _patch_db(self):
+        tmp = Path(tempfile.mkdtemp(prefix="kg_chat_"))
+        return patch.object(engine, "DB_PATH", tmp / "knowledge.db")
+
+    def test_render_window(self) -> None:
+        text = kg_ingest.render_window(
+            [
+                {"user_id": "1", "nickname": "小明", "time": "08-23 21:02", "text": "第一行\n第二行"},
+                {"user_id": "2", "nickname": "", "time": "", "content": "用 content 字段也行"},
+                {"user_id": "3", "text": ""},
+            ]
+        )
+        self.assertIn("[08-23 21:02] 小明(qq:1): 第一行 第二行", text)
+        self.assertIn("(qq:2): 用 content 字段也行", text)
+        self.assertNotIn("qq:3", text)  # empty message skipped entirely
+
+    def test_ingest_chat_window_end_to_end_without_llm(self) -> None:
+        with self._patch_db(), patch.object(kg_extract, "llm", None):
+            result = kg_ingest.ingest_chat_window(
+                "830070676",
+                [
+                    {"user_id": "100", "nickname": "小明", "text": "大家好"},
+                    {"user_id": "200", "nickname": "小红", "text": "你好呀"},
+                    {"user_id": "300", "nickname": "小刚", "text": "签到"},
+                    {"user_id": "100", "nickname": "明明", "text": "改名了"},
+                ],
+            )
+            self.assertGreaterEqual(result["persons"], 3)
+            self.assertEqual(result["members_linked"], 3)  # distinct persons linked once
+            # Deterministic nodes exist with namespaced ids.
+            person = engine.find_entity("qq:100")
+            group = engine.find_entity("group:830070676")
+            self.assertIsNotNone(person)
+            self.assertEqual(person["name"], "明明")
+            self.assertEqual(group["type"], "群组")
+            exported = engine.export_graph()
+        predicates = {e["predicate"] for e in exported["edges"]}
+        self.assertIn("活跃于", predicates)
+
+    def test_query_knowledge_assembles_answer(self) -> None:
+        with self._patch_db():
+            engine.init()
+            engine.add_document("测试文档", "凯伊是一款自托管情报助手，支持知识图谱检索。")
+            engine.add_relation("项目A", "使用", "Java")
+            out = kg_ingest.query_knowledge(q="知识图谱", entity="项目A")
+            self.assertTrue(out["chunks"])
+            self.assertTrue(out["graph"]["found"])
+            self.assertIn("【知识片段】", out["answer"])
+            self.assertIn("【图谱关联】", out["answer"])
+            miss = kg_ingest.query_knowledge(entity="不存在的玩意")
+            self.assertFalse(miss["graph"]["found"])
 
 
 if __name__ == "__main__":

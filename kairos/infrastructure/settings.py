@@ -21,6 +21,11 @@ MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "deepseek").strip().lower()
 MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "").strip()
 MODEL_API_KEY = os.getenv("MODEL_API_KEY", "").strip()
 MODEL_NAME = os.getenv("MODEL_NAME", "").strip()
+# Optional explicit proxy applied to LLM calls only (e.g. OpenRouter behind a
+# local clash) so Feishu and other domestic traffic stay direct.
+MODEL_PROXY = os.getenv("MODEL_PROXY", "").strip()
+# Shared token for machine-to-machine knowledge endpoints (empty = allow all).
+KAIROS_API_TOKEN = os.getenv("KAIROS_API_TOKEN", "").strip()
 RECENT_LIMIT = max(1, min(int(os.getenv("RECENT_MESSAGE_LIMIT", "30")), 50))
 REPORT_DIR = Path(os.getenv("DAILY_REPORT_DIR", str(PROJECT_ROOT / "reports")))
 SKILLS_DIR = Path(os.getenv("SKILLS_DIR", str(PROJECT_ROOT / "skills")))

@@ -181,23 +181,62 @@ def add_document(title: str, text: str, kind: str = "note", source: str = "") ->
         con.close()
 
 
-def upsert_entity(name: str, etype: str = "entity") -> int:
-    """Insert an entity deduplicated by alias-aware canonical name."""
+def upsert_entity(name: str, etype: str = "entity", canonical: str | None = None) -> int:
+    """Insert an entity deduplicated by alias-aware or explicit canonical id.
+
+    ``canonical`` pins a deterministic identity (e.g. "qq:123456",
+    "group:830070676") so display-name changes never split the node; on an
+    explicit-canonical collision the newest name wins (a rename).
+    """
     name = (name or "").strip()
     if not name:
         raise ValueError("entity name required")
-    canonical = _alias_base(name)
+    etype = etype or "entity"
+    explicit = (canonical or "").strip()
+    key = _normalize(explicit) if explicit else _alias_base(name)
     con = _connect()
     try:
-        row = con.execute("SELECT id FROM entities WHERE canonical=? LIMIT 1", (canonical,)).fetchone()
+        row = con.execute("SELECT id FROM entities WHERE canonical=? LIMIT 1", (key,)).fetchone()
         if row:
-            return int(row["id"])
+            rid = int(row["id"])
+            if explicit:
+                con.execute("UPDATE entities SET name=?, type=? WHERE id=?", (name, etype, rid))
+                con.commit()
+            return rid
+        if not explicit:
+            row = con.execute("SELECT id FROM entities WHERE name=? LIMIT 1", (name,)).fetchone()
+            if row:
+                return int(row["id"])
         cur = con.execute(
             "INSERT INTO entities (name, type, canonical, created_at) VALUES (?,?,?,?)",
-            (name, etype, canonical, _now()),
+            (name, etype, key, _now()),
         )
         con.commit()
         return int(cur.lastrowid)
+    finally:
+        con.close()
+
+
+def add_relation_by_ids(subject_id: int, predicate: str, object_id: int, confidence: int = 1) -> bool:
+    """Insert a relation between two known entity ids (deterministic edges)."""
+    predicate = (predicate or "").strip()[:40]
+    sid, oid = int(subject_id), int(object_id)
+    if not predicate or sid == oid:
+        return False
+    con = _connect()
+    try:
+        exists = con.execute(
+            "SELECT id FROM relations WHERE subject_id=? AND predicate=? AND object_id=?",
+            (sid, predicate, oid),
+        ).fetchone()
+        if exists:
+            return False
+        con.execute(
+            "INSERT INTO relations (subject_id, predicate, object_id, confidence) VALUES (?,?,?,?)",
+            (sid, predicate, oid, max(1, min(10, int(confidence)))),
+        )
+        con.commit()
+        return True
     finally:
         con.close()
 
@@ -223,10 +262,15 @@ def add_relation(subject: str, predicate: str, obj: str, chunk_id: int | None = 
 
 
 def find_entity(name: str) -> dict | None:
-    canonical = _alias_base(name)
+    key = _alias_base(name)
+    plain = (name or "").strip()
     con = _connect()
     try:
-        row = con.execute("SELECT * FROM entities WHERE canonical=?", (canonical,)).fetchone()
+        row = con.execute("SELECT * FROM entities WHERE canonical=? LIMIT 1", (key,)).fetchone()
+        if not row and plain:
+            # Exact display-name fallback: covers deterministic nodes whose
+            # canonical is a namespaced id (qq:/group:) rather than the name.
+            row = con.execute("SELECT * FROM entities WHERE name=? LIMIT 1", (plain,)).fetchone()
         return dict(row) if row else None
     finally:
         con.close()
@@ -426,9 +470,14 @@ def dedupe_aliases() -> dict[str, Any]:
     """
     con = _connect()
     try:
-        rows = con.execute("SELECT id, name FROM entities").fetchall()
+        rows = con.execute("SELECT id, name, canonical FROM entities").fetchall()
         for r in rows:
-            con.execute("UPDATE entities SET canonical=? WHERE id=?", (_alias_base(r["name"]), r["id"]))
+            base = _alias_base(r["name"])
+            # Namespaced identities (qq:/group:) are authoritative — renaming
+            # a person must never re-derive their canonical from the nickname.
+            if ":" in r["canonical"] and r["canonical"] != base:
+                continue
+            con.execute("UPDATE entities SET canonical=? WHERE id=?", (base, r["id"]))
         rows = con.execute("SELECT id, name, type, canonical FROM entities").fetchall()
         groups: dict[str, list[sqlite3.Row]] = {}
         for r in rows:

@@ -34,6 +34,7 @@ class ModelConfig:
     api_key: str
     model: str
     provider: str
+    proxy: str = ""
 
 
 def resolve_model_config() -> ModelConfig:
@@ -46,7 +47,7 @@ def resolve_model_config() -> ModelConfig:
     if not api_key:
         api_key = settings.DEEPSEEK_KEY
     model = settings.MODEL_NAME or settings.MODEL
-    return ModelConfig(base_url=base_url, api_key=api_key, model=model, provider=provider)
+    return ModelConfig(base_url=base_url, api_key=api_key, model=model, provider=provider, proxy=settings.MODEL_PROXY)
 
 
 def build_client(config: ModelConfig | None = None) -> OpenAI:
@@ -55,6 +56,10 @@ def build_client(config: ModelConfig | None = None) -> OpenAI:
     kwargs: dict[str, Any] = {"api_key": config.api_key}
     if config.base_url:
         kwargs["base_url"] = config.base_url
+    if config.proxy:
+        import httpx
+
+        kwargs["http_client"] = httpx.Client(proxy=config.proxy, timeout=httpx.Timeout(120.0))
     return OpenAI(**kwargs)
 
 
@@ -115,5 +120,6 @@ def role_client(role: str) -> tuple[OpenAI | None, str]:
         api_key=actual_key,
         model=model or settings.MODEL_NAME or settings.MODEL,
         provider=provider or "default",
+        proxy=settings.MODEL_PROXY,
     )
     return build_client_optional(cfg), cfg.model
