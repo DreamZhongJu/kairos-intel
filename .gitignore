@@ -6,6 +6,9 @@ data/
 knowledge_spaces.json
 oauth_tokens.json
 
+# Server ops helper with embedded credentials — never commit
+ssh_koishi.py
+
 # Python
 __pycache__/
 *.py[cod]
