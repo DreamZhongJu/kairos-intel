@@ -24,6 +24,8 @@ MODEL_NAME = os.getenv("MODEL_NAME", "").strip()
 # Optional explicit proxy applied to LLM calls only (e.g. OpenRouter behind a
 # local clash) so Feishu and other domestic traffic stay direct.
 MODEL_PROXY = os.getenv("MODEL_PROXY", "").strip()
+# SDK-level retries for connection errors / timeouts / 429 / 5xx (flaky proxy).
+MODEL_MAX_RETRIES = max(0, min(int(os.getenv("MODEL_MAX_RETRIES", "3")), 10))
 # Shared token for machine-to-machine knowledge endpoints (empty = allow all).
 KAIROS_API_TOKEN = os.getenv("KAIROS_API_TOKEN", "").strip()
 RECENT_LIMIT = max(1, min(int(os.getenv("RECENT_MESSAGE_LIMIT", "30")), 50))

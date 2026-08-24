@@ -16,4 +16,8 @@ if ! mcporter config list --json 2>/dev/null | grep -q '"exa"'; then
   mcporter config add exa https://mcp.exa.ai/mcp --scope home >/dev/null 2>&1 || true
 fi
 
+# Web panel (dashboard + knowledge-graph visualization) alongside the bot.
+mkdir -p /app/logs
+python web_panel.py >/app/logs/web-panel.log 2>&1 &
+
 exec python app.py

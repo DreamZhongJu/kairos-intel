@@ -53,7 +53,7 @@ def resolve_model_config() -> ModelConfig:
 def build_client(config: ModelConfig | None = None) -> OpenAI:
     """Return an OpenAI-compatible client (constructed even without a key)."""
     config = config or resolve_model_config()
-    kwargs: dict[str, Any] = {"api_key": config.api_key}
+    kwargs: dict[str, Any] = {"api_key": config.api_key, "max_retries": settings.MODEL_MAX_RETRIES}
     if config.base_url:
         kwargs["base_url"] = config.base_url
     if config.proxy:

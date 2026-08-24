@@ -11,6 +11,7 @@ services:
     restart: unless-stopped
     ports:
       - "8095:8095"
+      - "8090:8090"
     env_file: .env
     environment:
       TZ: Asia/Shanghai
