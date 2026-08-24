@@ -23,6 +23,7 @@ COPY kairos ./kairos
 COPY app.py ./
 COPY oauth_server.py ./
 COPY web_panel.py ./
+COPY web_static ./web_static
 COPY skills ./skills
 COPY deploy/agent-reach-entrypoint.sh /usr/local/bin/agent-reach-entrypoint
 COPY deploy/import_reddit_cookies.py /usr/local/bin/import-reddit-cookies

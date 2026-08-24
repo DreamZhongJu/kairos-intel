@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import html
 import os
+from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template_string, request
+from flask import Flask, jsonify, redirect, render_template_string, request, send_from_directory
 from markupsafe import Markup
 
 from kairos.infrastructure.settings import CLAUDE_MEM_URL, DB_PATH, MODEL
@@ -26,6 +27,7 @@ from kairos.observability import metrics
 PANEL_TOKEN = os.getenv("PANEL_TOKEN", "").strip()
 PANEL_PORT = int(os.getenv("PANEL_PORT", "8090"))
 PANEL_HOST = os.getenv("PANEL_HOST", "0.0.0.0")
+VENDOR_DIR = Path(__file__).resolve().parent / "web_static" / "graph"
 
 
 def _auth_ok() -> bool:
@@ -330,23 +332,37 @@ def render_memories() -> str:
 
 
 def render_graph() -> str:
-    """Interactive force-directed knowledge graph view (self-contained, no CDN)."""
+    """Interactive knowledge graph view — sigma.js WebGL renderer.
+
+    The legacy canvas version recomputed O(n^2) repulsion on the main thread
+    every frame and froze past ~1k nodes. This build renders with WebGL
+    (sigma.js v2) and lays out with ForceAtlas2 running in a web worker
+    (Barnes-Hut, O(n log n)), keeping thousands of entities fluid.
+    """
     body = """
     <style>
       .graph-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
       .graph-toolbar input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; width:220px; }
+      .graph-toolbar button { padding:6px 12px; }
       #graph-wrap { position:relative; height:72vh; border:1px solid var(--border); border-radius:10px; background:#fbfcfe; overflow:hidden; }
-      #graph-canvas { width:100%; height:100%; display:block; cursor:grab; }
-      #graph-canvas.dragging { cursor:grabbing; }
-      #graph-empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:20px; }
+      #graph-empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:20px; z-index:4; background:#fbfcfe; }
+      #graph-search-list { position:absolute; top:52px; left:12px; z-index:6; background:#fff; border:1px solid var(--border);
+        border-radius:8px; box-shadow:0 6px 24px rgba(15,25,40,.12); display:none; min-width:240px; max-height:280px; overflow:auto; }
+      #graph-search-list .s-item { padding:7px 12px; font-size:13px; cursor:pointer; display:flex; gap:8px; align-items:center; }
+      #graph-search-list .s-item:hover { background:#f0f4fa; }
+      #graph-search-list .s-item .deg { color:var(--muted); font-size:11px; margin-left:auto; }
       .graph-legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; }
-      .legend-item { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+      .legend-item { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); cursor:pointer;
+        user-select:none; padding:2px 6px; border-radius:6px; }
+      .legend-item:hover { background:#eef2f8; }
+      .legend-item.off { opacity:.35; text-decoration:line-through; }
       .legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
-      .graph-detail { margin-top:12px; padding:12px 14px; background:#fafbfc; border:1px solid var(--border); border-radius:8px; font-size:13px; min-height:20px; }
+      .graph-detail { margin-top:12px; padding:12px 14px; background:#fafbfc; border:1px solid var(--border); border-radius:8px; font-size:13px; min-height:20px; max-height:34vh; overflow:auto; }
       .graph-detail .detail-title { font-size:14px; margin-bottom:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-      .graph-detail .rel { padding:3px 0; border-bottom:1px dashed var(--border); }
+      .graph-detail .rel { padding:3px 0; border-bottom:1px dashed var(--border); cursor:pointer; }
+      .graph-detail .rel:hover { background:#f0f4fa; }
       .graph-detail .rel .pred { color:var(--accent); font-weight:600; margin-right:6px; }
-      #graph-tip { position:absolute; pointer-events:none; background:rgba(20,30,45,.92); color:#fff; padding:6px 10px; border-radius:6px; font-size:12px; display:none; z-index:5; }
+      #layout-status { font-size:12px; color:var(--muted); }
     </style>
     <div class="cards">
       <div class="card"><div class="label">文档</div><div class="value" id="stat-docs">—</div></div>
@@ -355,268 +371,272 @@ def render_graph() -> str:
     </div>
     <div class="panel">
       <div class="graph-toolbar">
-        <input id="graph-search" placeholder="搜索实体并定位…">
-        <button class="btn" id="graph-reset" type="button">重置视图</button>
+        <input id="graph-search" placeholder="搜索实体并定位…" autocomplete="off">
+        <button class="btn" id="btn-layout" type="button">暂停布局</button>
+        <button class="btn" id="btn-reheat" type="button">重新布局</button>
+        <button class="btn" id="btn-reset" type="button">重置视图</button>
+        <span id="layout-status"></span>
         <span class="muted">滚轮缩放 · 拖拽平移 · 拖节点调整 · 点击查看关联</span>
       </div>
       <div id="graph-wrap">
-        <canvas id="graph-canvas"></canvas>
-        <div id="graph-tip"></div>
         <div id="graph-empty" class="warn"></div>
+        <div id="graph-search-list"></div>
       </div>
       <div class="graph-legend" id="graph-legend"></div>
       <div class="graph-detail" id="graph-detail"><span class="muted">点击节点查看关联关系</span></div>
     </div>
+    <script src="/graph/vendor/graphology.umd.min.js"></script>
+    <script src="/graph/vendor/fa2.min.js"></script>
+    <script src="/graph/vendor/fa2.supervisor.min.js"></script>
+    <script src="/graph/vendor/sigma.min.js"></script>
     <script>
     (function(){
       function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-      var canvas = document.getElementById('graph-canvas');
-      var ctx = canvas.getContext('2d');
       var wrap = document.getElementById('graph-wrap');
-      var tip = document.getElementById('graph-tip');
       var empty = document.getElementById('graph-empty');
       var detail = document.getElementById('graph-detail');
       var legendEl = document.getElementById('graph-legend');
-      var dpr = window.devicePixelRatio || 1;
-
-      function setStats(obj){
-        document.getElementById('stat-docs').textContent = obj.documents;
-        document.getElementById('stat-entities').textContent = obj.entities;
-        document.getElementById('stat-relations').textContent = obj.relations;
-      }
+      var statusEl = document.getElementById('layout-status');
 
       fetch('/api/graph').then(function(r){ return r.json(); }).then(function(data){
-        setStats(data.stats);
-        var rawNodes = data.nodes || [];
-        var rawEdges = data.edges || [];
-        if (!rawNodes.length){
-          empty.textContent = '知识图谱还是空的。去飞书让助手「把这份资料入库」，或通过 MCP 调用 knowledge_ingest，实体与关系就会出现在这里。';
+        document.getElementById('stat-docs').textContent = data.stats.documents;
+        document.getElementById('stat-entities').textContent = data.stats.entities;
+        document.getElementById('stat-relations').textContent = data.stats.relations;
+        if (!data.nodes || !data.nodes.length){
+          empty.textContent = '知识图谱还是空的。';
           empty.style.display = 'flex';
           return;
         }
-        init(rawNodes, rawEdges);
+        init(data.nodes, data.edges);
       }).catch(function(e){
-        setStats({documents:'?', entities:'?', relations:'?'});
-        empty.textContent = '加载图谱失败：/api/graph 不可用（' + esc(e && e.message ? e.message : '') + '）';
+        empty.textContent = '加载图谱失败：' + esc(e && e.message ? e.message : '');
         empty.style.display = 'flex';
       });
 
       function init(rawNodes, rawEdges){
-        var nodes = rawNodes.map(function(n){
-          return { id: n.id, name: n.name, type: n.type, degree: n.degree || 0, x: 0, y: 0, vx: 0, vy: 0 };
+        var PALETTE = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
+        var typeColor = {}, paletteIdx = 0;
+
+        var graph = new graphology.Graph({ multi: false, type: 'undirected' });
+        rawNodes.forEach(function(n){
+          if (!typeColor[n.type]) typeColor[n.type] = PALETTE[paletteIdx++ % PALETTE.length];
+          var angle = Math.random() * Math.PI * 2, r = 80 * Math.sqrt(Math.random());
+          try {
+            graph.addNode(String(n.id), {
+              label: n.name, name: n.name, etype: n.type, degree: n.degree || 0,
+              x: Math.cos(angle) * r, y: Math.sin(angle) * r, size: 3
+            });
+          } catch (err) { /* duplicate id */ }
         });
-        var byId = {};
-        nodes.forEach(function(n){ byId[n.id] = n; });
-        var edges = [];
         rawEdges.forEach(function(e){
-          var s = byId[e.source], t = byId[e.target];
-          if (s && t) edges.push({ s: s, t: t, predicate: e.predicate });
+          var s = String(e.source), t = String(e.target);
+          if (graph.hasNode(s) && graph.hasNode(t) && s !== t && !graph.hasEdge(s, t)){
+            try { graph.addEdge(s, t, { predicate: e.predicate, color: 'rgba(150,165,180,.35)', size: 1 }); } catch (err) {}
+          }
         });
-        var adj = {};
-        nodes.forEach(function(n){ adj[n.id] = []; });
-        edges.forEach(function(e){ adj[e.s.id].push(e); adj[e.t.id].push(e); });
 
-        var palette = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
-        var typeColor = {};
-        nodes.forEach(function(n){ if (!(n.type in typeColor)) typeColor[n.type] = palette[Object.keys(typeColor).length % palette.length]; });
-        legendEl.innerHTML = Object.keys(typeColor).map(function(t){
-          return '<span class="legend-item"><span class="legend-dot" style="background:' + typeColor[t] + '"></span>' + esc(t) + '</span>';
-        }).join('');
+        // size by degree (sqrt scaling)
+        graph.forEachNode(function(node, attrs){
+          graph.setNodeAttribute(node, 'size', Math.max(3.5, Math.min(26, 3 + Math.sqrt(attrs.degree) * 2.2)));
+        });
 
-        var W = 0, H = 0;
-        function resize(){
-          W = wrap.clientWidth; H = wrap.clientHeight;
-          canvas.width = W * dpr; canvas.height = H * dpr;
-          canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-          render();
+        // ---- layout: FA2 supervisor keeps matrices resident in a worker ----
+        var order = graph.order;
+        var settings = Object.assign(
+          graphologyLayoutForceAtlas2.inferSettings(order),
+          { barnesHutTheta: 0.9, scalingRatio: 6, slowDown: Math.max(4, 1 + Math.log(order)) }
+        );
+        statusEl.textContent = '初始布局中…（' + order + ' 节点）';
+        // synchronous warm-up so the first paint is already structured
+        graphologyLayoutForceAtlas2.assign(graph, {
+          iterations: order > 4000 ? 60 : 120,
+          settings: settings
+        });
+
+        var renderer = new Sigma(graph, wrap, {
+          allowInvalidContainer: true,
+          renderEdgeLabels: false,
+          labelRenderedSizeThreshold: 13,
+          labelDensity: 1.1,
+          minCameraRatio: 0.02,
+          maxCameraRatio: 12
+        });
+
+        // ---- interaction state ----
+        var hoveredNode = null, selectedNode = null, searchHit = null;
+        var offTypes = {};
+        var nbSet = {};
+
+        renderer.on('enterNode', function(e){ hoveredNode = e.node; nbSet = neighborsOf(e.node); refresh(); });
+        renderer.on('leaveNode', function(){ hoveredNode = null; nbSet = selectedNode ? neighborsOf(selectedNode) : {}; refresh(); });
+        renderer.on('clickNode', function(e){ selectNode(e.node); });
+        renderer.on('clickStage', function(){
+          if (selectedNode){ selectedNode = null; nbSet = {}; renderDetail(null); refresh(); }
+        });
+        renderer.on('downNode', function(){ setRunning(false); });   // dragging pauses layout for precision
+
+        function neighborsOf(node){
+          var set = {};
+          graph.forEachNeighbor(node, function(nb){ set[nb] = true; });
+          return set;
         }
-        window.addEventListener('resize', resize);
 
-        var margin = 60;
-        nodes.forEach(function(n){
-          n.x = margin + Math.random() * Math.max(1, W - 2 * margin);
-          n.y = margin + Math.random() * Math.max(1, H - 2 * margin);
-        });
-
-        var view = { x: 0, y: 0, scale: 1 };
-        var draggingNode = null, panning = false, hoverNode = null, moved = false;
-        var lastX = 0, lastY = 0;
-
-        function radius(n){ return Math.max(6, Math.min(22, 5 + Math.sqrt(n.degree) * 2.6)); }
-
-        function step(){
-          var k = 9000, rest = 110, gravity = 0.02, damp = 0.82, maxSpeed = 5;
-          for (var i = 0; i < nodes.length; i++){
-            var a = nodes[i];
-            for (var j = i + 1; j < nodes.length; j++){
-              var b = nodes[j];
-              var dx = a.x - b.x, dy = a.y - b.y;
-              var d2 = dx * dx + dy * dy + 1;
-              var d = Math.sqrt(d2);
-              var f = k / d2;
-              a.vx += dx / d * f; a.vy += dy / d * f;
-              b.vx -= dx / d * f; b.vy -= dy / d * f;
+        // ---- reducers (light table lookups; memoized by sigma) ----
+        renderer.setSetting('nodeReducer', function(node, data){
+          var res = Object.assign({}, data);
+          res.color = typeColor[data.etype] || '#999';
+          if (offTypes[data.etype]) { res.hidden = true; return res; }
+          var active = hoveredNode || selectedNode || searchHit;
+          if (active){
+            if (node === active){ res.highlighted = true; res.zIndex = 3; res.size = data.size * 1.2; }
+            else if (nbSet[node]){ res.zIndex = 2; }
+            else {
+              res.color = 'rgba(160,170,185,.22)';
+              res.label = null;
+              res.size = 2.5;
             }
           }
-          edges.forEach(function(e){
-            var dx = e.t.x - e.s.x, dy = e.t.y - e.s.y;
-            var d = Math.sqrt(dx * dx + dy * dy) || 1;
-            var f = (d - rest) * 0.006;
-            e.s.vx += dx / d * f; e.s.vy += dy / d * f;
-            e.t.vx -= dx / d * f; e.t.vy -= dy / d * f;
-          });
-          nodes.forEach(function(a){
-            if (a === draggingNode) return;
-            a.vx += (W / 2 - a.x) * gravity;
-            a.vy += (H / 2 - a.y) * gravity;
-            a.vx *= damp; a.vy *= damp;
-            var sp = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-            if (sp > maxSpeed){ a.vx *= maxSpeed / sp; a.vy *= maxSpeed / sp; }
-            a.x += a.vx; a.y += a.vy;
-          });
-        }
-
-        function worldPos(clientX, clientY){
-          var rect = canvas.getBoundingClientRect();
-          return { x: (clientX - rect.left - view.x) / view.scale, y: (clientY - rect.top - view.y) / view.scale };
-        }
-
-        function pickNode(wx, wy){
-          for (var i = nodes.length - 1; i >= 0; i--){
-            var n = nodes[i], r = radius(n) + 3;
-            var dx = n.x - wx, dy = n.y - wy;
-            if (dx * dx + dy * dy <= r * r) return n;
-          }
-          return null;
-        }
-
-        function render(){
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          ctx.clearRect(0, 0, W, H);
-          ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.x, dpr * view.y);
-          edges.forEach(function(e){
-            var dim = hoverNode && e.s !== hoverNode && e.t !== hoverNode;
-            ctx.strokeStyle = dim ? 'rgba(180,190,200,.18)' : 'rgba(150,165,180,.55)';
-            ctx.lineWidth = dim ? 0.6 : 1.1;
-            ctx.beginPath(); ctx.moveTo(e.s.x, e.s.y); ctx.lineTo(e.t.x, e.t.y); ctx.stroke();
-          });
-          nodes.forEach(function(n){
-            var r = radius(n);
-            ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-            ctx.fillStyle = typeColor[n.type] || '#999';
-            ctx.fill();
-            ctx.lineWidth = hoverNode === n ? 2.5 : 1;
-            ctx.strokeStyle = hoverNode === n ? '#111' : 'rgba(0,0,0,.25)';
-            ctx.stroke();
-            ctx.fillStyle = '#222';
-            ctx.font = (hoverNode === n ? 'bold ' : '') + '12px "Segoe UI","Microsoft YaHei",sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillText(n.name, n.x, n.y + r + 3);
-          });
-        }
-
-        var active = true;
-        function frame(){
-          if (active || draggingNode || panning){
-            step();
-            var maxV = 0;
-            nodes.forEach(function(n){ var s = n.vx * n.vx + n.vy * n.vy; if (s > maxV) maxV = s; });
-            active = maxV > 0.05;
-          }
-          render();
-          requestAnimationFrame(frame);
-        }
-
-        function showTip(n, clientX, clientY){
-          tip.innerHTML = '<b>' + esc(n.name) + '</b> · ' + esc(n.type) + ' · ' + n.degree + ' 条关系';
-          tip.style.display = 'block';
-          tip.style.left = (clientX - wrap.getBoundingClientRect().left + 14) + 'px';
-          tip.style.top = (clientY - wrap.getBoundingClientRect().top + 14) + 'px';
-        }
-        function hideTip(){ tip.style.display = 'none'; }
-
-        function showDetail(n){
-          var html = '<div class="detail-title"><b>' + esc(n.name) + '</b> <span class="tag">' + esc(n.type) + '</span> <span class="muted">' + n.degree + ' 条关系</span></div>';
-          var rels = adj[n.id].map(function(e){
-            if (e.s.id === n.id) return '<div class="rel"><span class="pred">' + esc(e.predicate) + '</span>→ ' + esc(e.t.name) + '</div>';
-            return '<div class="rel">' + esc(e.s.name) + ' <span class="pred">' + esc(e.predicate) + '</span>→ 当前实体</div>';
-          });
-          detail.innerHTML = html + (rels.join('') || '<div class="muted">无关联关系</div>');
-        }
-
-        canvas.addEventListener('mousedown', function(ev){
-          moved = false;
-          var wp = worldPos(ev.clientX, ev.clientY);
-          var n = pickNode(wp.x, wp.y);
-          if (n) draggingNode = n; else panning = true;
-          lastX = ev.clientX; lastY = ev.clientY;
-          canvas.classList.add('dragging');
-          ev.preventDefault();
+          if (searchHit === node && node !== active){ res.highlighted = true; }
+          return res;
         });
-        window.addEventListener('mousemove', function(ev){
-          if (draggingNode){
-            var wp = worldPos(ev.clientX, ev.clientY);
-            draggingNode.x = wp.x; draggingNode.y = wp.y;
-            draggingNode.vx = 0; draggingNode.vy = 0;
-            if (Math.abs(ev.clientX - lastX) + Math.abs(ev.clientY - lastY) > 2) moved = true;
-            lastX = ev.clientX; lastY = ev.clientY;
+        renderer.setSetting('edgeReducer', function(edge, data){
+          var res = Object.assign({}, data);
+          var active = hoveredNode || selectedNode;
+          if (active){
+            var s = graph.source(edge), t = graph.target(edge);
+            if (s !== active && t !== active) res.hidden = true;
+            else { res.color = '#5a7699'; res.size = 1.6; }
+          } else {
+            res.color = 'rgba(150,165,180,.35)';
+            res.size = 1;
+          }
+          return res;
+        });
+
+        // ---- worker-driven layout ----
+        var layout = new graphologyLayoutForceAtlas2Supervisor(graph, { settings: settings });
+
+        var refreshQueued = false;
+        function refresh(){
+          if (!refreshQueued){
+            refreshQueued = true;
+            requestAnimationFrame(function(){ refreshQueued = false; renderer.refresh(); });
+          }
+        }
+        // repaint loop only while the worker is feeding new positions
+        (function paintLoop(){
+          if (layout.isRunning()) renderer.refresh();
+          requestAnimationFrame(paintLoop);
+        })();
+
+        function setRunning(v){
+          if (v && !layout.isRunning()){ layout.start(); }
+          else if (!v && layout.isRunning()){ layout.stop(); renderer.refresh(); }
+          document.getElementById('btn-layout').textContent = v ? '暂停布局' : '继续布局';
+          statusEl.textContent = v ? '布局运行中（worker 线程）' : '布局已暂停';
+        }
+
+        document.getElementById('btn-layout').addEventListener('click', function(){ setRunning(!layout.isRunning()); });
+        document.getElementById('btn-reheat').addEventListener('click', function(){
+          layout.stop();
+          statusEl.textContent = '重新布局…';
+          graphologyLayoutForceAtlas2.assign(graph, { iterations: 150, settings: settings });
+          renderer.refresh();
+          layout.start();
+        });
+        document.getElementById('btn-reset').addEventListener('click', function(){
+          renderer.getCamera().animate({ x: 0, y: 0, ratio: 1, angle: 0 }, { duration: 300 });
+        });
+
+        // ---- legend with type filtering ----
+        legendEl.innerHTML = Object.keys(typeColor).map(function(t){
+          return '<span class="legend-item" data-type="' + esc(t) + '">' +
+                 '<span class="legend-dot" style="background:' + typeColor[t] + '"></span>' + esc(t) + '</span>';
+        }).join('');
+        legendEl.addEventListener('click', function(ev){
+          var item = ev.target.closest('.legend-item');
+          if (!item) return;
+          var t = item.getAttribute('data-type');
+          offTypes[t] = !offTypes[t];
+          item.classList.toggle('off', !!offTypes[t]);
+          refresh();
+        });
+
+        // ---- detail panel ----
+        function renderDetail(node){
+          if (!node){
+            detail.innerHTML = '<span class="muted">点击节点查看关联关系</span>';
             return;
           }
-          if (panning){
-            view.x += ev.clientX - lastX; view.y += ev.clientY - lastY;
-            if (Math.abs(ev.clientX - lastX) + Math.abs(ev.clientY - lastY) > 2) moved = true;
-            lastX = ev.clientX; lastY = ev.clientY;
-            render();
-            return;
-          }
-          var wp = worldPos(ev.clientX, ev.clientY);
-          var n = pickNode(wp.x, wp.y);
-          if (n !== hoverNode){ hoverNode = n; render(); }
-          if (n) showTip(n, ev.clientX, ev.clientY); else hideTip();
-        });
-        window.addEventListener('mouseup', function(){
-          draggingNode = null; panning = false;
-          canvas.classList.remove('dragging');
-        });
-        canvas.addEventListener('click', function(ev){
-          if (moved) return;
-          var wp = worldPos(ev.clientX, ev.clientY);
-          var n = pickNode(wp.x, wp.y);
-          if (n) showDetail(n);
-        });
-        canvas.addEventListener('wheel', function(ev){
-          ev.preventDefault();
-          var factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-          var rect = canvas.getBoundingClientRect();
-          var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-          var newScale = Math.max(0.15, Math.min(6, view.scale * factor));
-          var k = newScale / view.scale;
-          view.x = mx - (mx - view.x) * k;
-          view.y = my - (my - view.y) * k;
-          view.scale = newScale;
-          render();
-        }, { passive: false });
-
-        document.getElementById('graph-reset').addEventListener('click', function(){
-          view.x = 0; view.y = 0; view.scale = 1; hoverNode = null; render();
-        });
-        document.getElementById('graph-search').addEventListener('input', function(ev){
-          var q = (ev.target.value || '').trim().toLowerCase();
-          if (!q){ hoverNode = null; render(); return; }
-          var hit = null;
-          nodes.forEach(function(n){ if (!hit && n.name.toLowerCase().indexOf(q) !== -1) hit = n; });
-          if (hit){
-            view.x = W / 2 - hit.x * view.scale;
-            view.y = H / 2 - hit.y * view.scale;
-            hoverNode = hit;
-            render();
-            showDetail(hit);
-          }
+          var attrs = graph.getNodeAttributes(node);
+          var rows = [];
+          graph.forEachEdge(node, function(edge, eAttrs, s, t){
+            var other = s === node ? t : s;
+            rows.push('<div class="rel" data-node="' + esc(other) + '">' +
+              '<span class="pred">' + esc(eAttrs.predicate || '相关') + '</span>' +
+              esc(graph.getNodeAttribute(other, 'name')) +
+              ' <span style="color:var(--muted)">(' + esc(graph.getNodeAttribute(other, 'etype')) + ')</span></div>');
+          });
+          detail.innerHTML =
+            '<div class="detail-title"><strong>' + esc(attrs.name) + '</strong>' +
+            '<span class="tag">' + esc(attrs.etype) + '</span>' +
+            '<span class="muted">度数 ' + attrs.degree + '</span></div>' +
+            (rows.length ? rows.join('') : '<span class="muted">无关联关系</span>');
+        }
+        detail.addEventListener('click', function(ev){
+          var rel = ev.target.closest('.rel');
+          if (!rel) return;
+          focusNode(rel.getAttribute('data-node'));
         });
 
-        resize();
-        requestAnimationFrame(frame);
+        function selectNode(node){
+          selectedNode = node;
+          nbSet = neighborsOf(node);
+          renderDetail(node);
+          var pos = renderer.getNodeDisplayData(node);
+          if (pos){
+            renderer.getCamera().animate(
+              { x: pos.x, y: pos.y, ratio: Math.max(0.08, renderer.getCamera().getState().ratio * 0.55) },
+              { duration: 320 }
+            );
+          }
+          refresh();
+        }
+        function focusNode(node){
+          if (!graph.hasNode(node)) return;
+          selectNode(node);
+        }
+
+        // ---- search ----
+        var input = document.getElementById('graph-search');
+        var listEl = document.getElementById('graph-search-list');
+        input.addEventListener('input', function(){
+          var q = input.value.trim().toLowerCase();
+          if (!q){ listEl.style.display = 'none'; searchHit = null; refresh(); return; }
+          var hits = [];
+          graph.forEachNode(function(node, attrs){
+            if (hits.length >= 12) return;
+            if (offTypes[attrs.etype]) return;
+            if (attrs.name.toLowerCase().indexOf(q) !== -1) hits.push(node);
+          });
+          listEl.innerHTML = hits.map(function(node){
+            var a = graph.getNodeAttributes(node);
+            return '<div class="s-item" data-node="' + node + '">' +
+                   '<span class="legend-dot" style="background:' + (typeColor[a.etype] || '#999') + '"></span>' +
+                   esc(a.name) + '<span class="deg">度 ' + a.degree + '</span></div>';
+          }).join('');
+          listEl.style.display = hits.length ? 'block' : 'none';
+        });
+        listEl.addEventListener('click', function(ev){
+          var item = ev.target.closest('.s-item');
+          if (!item) return;
+          listEl.style.display = 'none';
+          input.value = '';
+          selectNode(item.getAttribute('data-node'));
+        });
+
+        layout.start();
+        statusEl.textContent = '布局运行中（worker 线程）· 可随时暂停';
       }
     })();
     </script>
@@ -657,6 +677,12 @@ def create_app() -> Flask:
     @app.get("/graph")
     def graph() -> str:
         return render_graph()
+
+    @app.get("/graph/vendor/<path:fname>")
+    def graph_vendor(fname: str):
+        resp = send_from_directory(VENDOR_DIR, fname)
+        resp.headers["Cache-Control"] = "public, max-age=604800"
+        return resp
 
     @app.get("/api/graph")
     def api_graph() -> Any:
