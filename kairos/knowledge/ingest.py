@@ -87,6 +87,14 @@ def ingest_chat_window(
     extracted = kg_extract.extract(window_text, provider=provider)
     entities = extracted.get("entities", [])
     relations = extracted.get("relations", [])
+    # Map per-chunk provenance tags to real chunk ids for traceability.
+    _con = engine._connect()
+    try:
+        chunk_ids = [r[0] for r in _con.execute(
+            "SELECT id FROM chunks WHERE doc_id=? ORDER BY seq", (doc_id,)
+        ).fetchall()]
+    finally:
+        _con.close()
     for ent in entities:
         try:
             engine.upsert_entity(ent["name"], ent["type"])
@@ -94,10 +102,13 @@ def ingest_chat_window(
             pass
     for rel in relations:
         try:
+            ci = int(rel.pop("_ci", 0) or 0)
+            chunk_id = chunk_ids[ci] if 0 <= ci < len(chunk_ids) else None
             engine.add_relation(
                 rel["subject"],
                 rel["predicate"],
                 rel["object"],
+                chunk_id=chunk_id,
                 confidence=int(rel.get("confidence", 1)),
                 valid_from=rel.get("time_start"),
                 valid_to=rel.get("time_end"),

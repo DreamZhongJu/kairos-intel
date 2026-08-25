@@ -250,6 +250,8 @@ def _merge(all_entities: list[Any], all_relations: list[Any]) -> dict[str, Any]:
                 "time_start": t_start,
                 "time_end": t_end,
                 "playful": playful,
+                # chunk index within the source text (provenance for storage)
+                "_ci": int(item.get("_ci", 0) or 0),
             }
         )
 
@@ -293,13 +295,20 @@ def extract(text: str, max_text: int = 12000, chunk_limit: int = 1200,
         return {"entities": [], "relations": []}
 
     n_workers = int(workers) if workers is not None else _EXTRACT_WORKERS
+
+    def _tagged(idx: int, chunk: str) -> tuple[list[Any], list[Any]]:
+        ents, rels = _extract_chunk(chunk, llm_client=use_client, model_id=use_model)
+        # Tag provenance so the caller can map results back to the source chunk.
+        for item in rels:
+            if isinstance(item, dict):
+                item["_ci"] = idx
+        return ents, rels
+
     if n_workers > 1 and len(chunks) > 1:
         with ThreadPoolExecutor(max_workers=min(n_workers, len(chunks))) as pool:
-            chunk_results = list(
-                pool.map(lambda c: _extract_chunk(c, llm_client=use_client, model_id=use_model), chunks)
-            )
+            chunk_results = list(pool.map(lambda pair: _tagged(*pair), list(enumerate(chunks))))
     else:
-        chunk_results = [_extract_chunk(chunk, llm_client=use_client, model_id=use_model) for chunk in chunks]
+        chunk_results = [_tagged(i, c) for i, c in enumerate(chunks)]
 
     all_entities: list[Any] = []
     all_relations: list[Any] = []
