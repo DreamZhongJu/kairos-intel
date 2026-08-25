@@ -39,15 +39,18 @@ TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kairos KG 
 #lg{position:fixed;top:10px;left:10px;background:rgba(255,255,255,.92);padding:8px 12px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.15)}
 #hint{position:fixed;bottom:10px;left:10px;background:rgba(255,255,255,.85);padding:6px 10px;border-radius:8px;font:12px sans-serif}</style></head><body>
 <div id="m"></div>
-<div id="lg"><b>Louvain 社区发现</b><span id="nc"></span> 个社区分别着色，点击节点聚焦查看</div>
-<div id="hint">拖拽旋转 / 滚轮缩放 | 节点大小=关系数 颜色=社区</div>
+<div id="lg"><b>Louvain 社区发现</b><span id="nc"></span> 个社区分别着色 | 悬停看关系,点击聚焦</div>
+<div id="hint">滚轮缩放 / 拖拽平移 | 节点大小=关系数 颜色=圈子 | 悬停节点显示详情</div>
 <script>
 var nodes = new vis.DataSet(NODES_JSON);
 var edges = new vis.DataSet(EDGES_JSON);
+// physics disabled: layout is pre-computed server-side (spring_layout),
+// so rendering is static and instant — no CPU burn on load or drag.
 var net = new vis.Network(document.getElementById("m"), {nodes:nodes, edges:edges},
- {physics:{solver:"forceAtlas2Based", forceAtlas2Based:{gravitationalConstant:-60, springLength:120}, stabilization:{iterations:400}},
-  interaction:{hover:true, tooltipDelay:120}, edges:{selectionWidth:2}});
-net.on("click", function(p){ if(p.nodes.length){ net.focus(p.nodes[0], {scale:1.2}); } });
+ {physics:{enabled:false},
+  interaction:{hover:true, tooltipDelay:150, navigationButtons:true, keyboard:true},
+  edges:{selectionWidth:2}});
+net.on("click", function(p){ if(p.nodes.length){ net.focus(p.nodes[0], {scale:1.6, animation:{duration:300}}); } });
 document.getElementById("nc").textContent = __NCOMM__;
 </script></body></html>"""
 
@@ -93,6 +96,10 @@ def main() -> None:
     cid = {n: i for i, cset in enumerate(comms) for n in cset}
     print(f"communities: {len(comms)}, sizes: {[len(c) for c in comms[:12]]}")
 
+    # Pre-compute layout server-side so the browser renders a static scene:
+    # zero startup physics => instant load, smooth pan/zoom even on phones.
+    pos = nx.spring_layout(G, weight="w", iterations=120, seed=42)
+
     # bridge score: approximate betweenness — people connecting communities
     bridges = sorted(
         nx.betweenness_centrality(G, k=min(200, len(G)), weight="w", seed=42).items(),
@@ -102,21 +109,22 @@ def main() -> None:
     nj = [
         {
             "id": str(n),
-            "label": G.nodes[n]["name"][:14],
+            "x": float(pos[n][0]) * 2400,
+            "y": float(pos[n][1]) * 1600,
+            "shape": "dot",
+            "size": 4 + min(G.degree(n), 26),
+            "label": G.nodes[n]["name"][:14] if G.degree(n) >= 4 else "",
             "title": f"{G.nodes[n]['name']} [{G.nodes[n]['type']}] 度={G.degree(n)} 社区#{cid[n] + 1}",
             "color": PALETTE[cid[n] % len(PALETTE)],
-            "value": min(G.degree(n), 30),
-            "font": {"size": 12 + min(G.degree(n), 20)},
         }
         for n in G.nodes
     ]
     ej = [
         {
             "from": str(u), "to": str(v),
-            "label": G[u][v]["p"], "title": G[u][v]["p"],
-            "width": 0.5,
-            "color": {"color": "#97b8c8", "highlight": "#e74c3c"},
-            "font": {"size": 9},
+            "title": G[u][v]["p"],
+            "width": 0.4,
+            "color": {"color": "#97b8c8", "highlight": "#e74c3c", "hover": "#e67e22"},
         }
         for u, v in G.edges
     ]
