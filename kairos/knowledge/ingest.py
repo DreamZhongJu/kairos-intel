@@ -134,7 +134,67 @@ def ingest_chat_window(
     }
 
 
-def query_knowledge(q: str = "", entity: str = "", limit: int = 6) -> dict[str, Any]:
+def expand_entity(name: str, limit: int = 30) -> dict[str, Any]:
+    """All direct (non-noise) relations of one entity, best-confidence first.
+
+    The primitive behind iterative deep-dive (ToG-style): after a first
+    search round, the model picks an entity from the evidence and calls this
+    to walk one more hop, following whatever looks promising.
+    """
+    name = (name or "").strip()
+    limit = max(1, min(int(limit or 30), 60))
+    if not name:
+        return {"entity": name, "found": False, "relations": []}
+    engine.init()
+    con = engine._connect()
+    try:
+        row = con.execute(
+            "SELECT id, name FROM entities WHERE name=? OR canonical=? OR canonical=? LIMIT 1",
+            (name, name.lower(), engine._alias_base(name)),
+        ).fetchone()
+        if not row:
+            cands = con.execute(
+                "SELECT name FROM entities WHERE name LIKE ? LIMIT 8", (f"%{name}%",)
+            ).fetchall()
+            return {"entity": name, "found": False,
+                    "candidates": [c["name"] for c in cands]}
+        eid, resolved = int(row["id"]), row["name"]
+        rows = con.execute(
+            """
+            SELECT r.predicate p, r.confidence c, r.valid_from vf, r.valid_to vt,
+                   r.is_playful jp, e.id oid, e.name oname, e.type otype,
+                   CASE WHEN r.subject_id=:eid THEN 1 ELSE 0 END AS outward
+            FROM relations r JOIN entities e ON e.id = CASE WHEN r.subject_id=:eid THEN r.object_id ELSE r.subject_id END
+            WHERE (r.subject_id=:eid OR r.object_id=:eid) AND r.predicate NOT IN
+                  ('提及','提到','回复','询问','艾特','呼叫','调侃','评论','引用','@')
+            ORDER BY r.confidence DESC LIMIT :lim
+            """,
+            {"eid": eid, "lim": limit},
+        ).fetchall()
+    finally:
+        con.close()
+    relations = []
+    for r in rows:
+        arrow = f"{r['p']}{r['oname']}" if r["outward"] else f"\u53cd\u5411:{r['p']}{r['oname']}"
+        meta = []
+        if r["vf"] or r["vt"]:
+            meta.append(f"{r['vf'] or '?'}~{r['vt'] or '\u4eca'}")
+        if r["jp"]:
+            meta.append("\u73a9\u7b11")
+        suffix = f" \uff08{'/'.join(meta)}\uff09" if meta else ""
+        relations.append(f"- {arrow}{suffix} \uff08\u7f6e\u4fe1{int(r['c'])}\uff09")
+    return {"entity": resolved, "found": True, "relations": relations}
+
+
+def query_knowledge(
+    q: str = "", entity: str = "", expand: str = "", limit: int = 6
+) -> dict[str, Any]:
+    """Retrieve knowledge for a question / entity / deep-dive expansion.
+
+    ``expand`` (or ``q``/``entity`` prefixed with ``expand:``) switches to the
+    iterative deep-dive primitive: return every direct relation of one entity
+    so the caller can walk the graph hop by hop.
+    """
     """Lightweight retrieval for bot Q&A: keyword chunks plus a graph subgraph.
 
     Shared by the REST ``/api/knowledge/query`` endpoint and the MCP surface so
@@ -144,6 +204,14 @@ def query_knowledge(q: str = "", entity: str = "", limit: int = 6) -> dict[str, 
     entity = (entity or "").strip()
     limit = max(1, min(int(limit or 6), 12))
     engine.init()
+
+    # Iterative deep-dive primitive: expand one entity's direct relations.
+    if expand:
+        return expand_entity(expand, limit=30)
+    if entity.startswith("expand:"):
+        return expand_entity(entity[len("expand:"):], limit=30)
+    if q.startswith("expand:"):
+        return expand_entity(q[len("expand:"):], limit=30)
 
     # Neo4j mirror first (richer multi-hop context); SQLite fallback below.
     neo4j_used = False

@@ -240,6 +240,7 @@ def create_app() -> Flask:
         result = kg_ingest.query_knowledge(
             q=request.args.get("q", ""),
             entity=request.args.get("entity", ""),
+            expand=request.args.get("expand", ""),
             limit=limit,
         )
         return jsonify(result)
