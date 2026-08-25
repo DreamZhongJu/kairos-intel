@@ -222,6 +222,7 @@ def create_app() -> Flask:
                 messages,
                 source=str(data.get("source") or "qq"),
                 title=str(data.get("title") or ""),
+                provider=request.headers.get("X-Kairos-Provider", ""),
             )
             return jsonify(result)
         except ValueError as exc:

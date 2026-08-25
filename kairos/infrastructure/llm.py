@@ -205,6 +205,23 @@ def resolve_chain() -> list[ModelConfig]:
     return chain
 
 
+def client_for_provider(name: str) -> tuple[Any | None, str]:
+    """A client pinned to ONE chain member, matched by provider or model name.
+
+    Returns ``(client, model)``; ``(None, "")`` when nothing matches or the
+    name is empty. Callers pass both to ``chat.completions.create(model=...)``
+    so a pinned zen/nous/openrouter request never carries another
+    provider's model id.
+    """
+    key = (name or "").strip().lower()
+    if not key:
+        return None, ""
+    for cfg in resolve_chain():
+        if key in (cfg.provider.lower(), cfg.model.lower()) or key in cfg.model.lower():
+            return build_client(cfg), cfg.model
+    return None, ""
+
+
 def build_client_optional(config: ModelConfig | None = None) -> OpenAI | FailoverClient | None:
     """Return a client, or None when no API key is configured (lazy-safe).
 

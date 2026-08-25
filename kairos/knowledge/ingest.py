@@ -52,6 +52,7 @@ def ingest_chat_window(
     messages: list[dict[str, Any]],
     source: str = "qq",
     title: str = "",
+    provider: str = "",
 ) -> dict[str, Any]:
     """Ingest one window of group-chat messages; returns counts and stats."""
     msgs = [m for m in (messages or []) if isinstance(m, dict)]
@@ -83,7 +84,7 @@ def ingest_chat_window(
     window_text = render_window(msgs)
     doc_title = title or f"{source}群{channel_id} 聊天记录"
     doc_id = engine.add_document(doc_title, window_text, kind=source or "chat", source=f"{source}:{channel_id}")
-    extracted = kg_extract.extract(window_text)
+    extracted = kg_extract.extract(window_text, provider=provider)
     entities = extracted.get("entities", [])
     relations = extracted.get("relations", [])
     for ent in entities:

@@ -23,7 +23,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from kairos.infrastructure.llm import build_client_optional, model_name, role_client
+from kairos.infrastructure.llm import build_client_optional, client_for_provider, model_name, role_client
 from kairos.knowledge.engine import _normalize, chunk_text
 
 LOG = logging.getLogger("kairos.knowledge.extract")
@@ -119,13 +119,15 @@ def _parse_json(content: str) -> dict[str, Any]:
     return {}
 
 
-def _repair_json(raw: str) -> dict[str, Any]:
+def _repair_json(raw: str, llm_client: Any | None = None, model_id: str = "") -> dict[str, Any]:
     """One repair pass: ask the model to fix malformed JSON."""
-    if llm is None or not raw.strip():
+    use = llm_client or llm
+    use_model = model_id or model
+    if use is None or not raw.strip():
         return {}
     try:
-        response = llm.chat.completions.create(
-            model=model,
+        response = use.chat.completions.create(
+            model=use_model,
             temperature=0,
             timeout=90,
             messages=[
@@ -139,13 +141,15 @@ def _repair_json(raw: str) -> dict[str, Any]:
         return {}
 
 
-def _call_extract(chunk: str, continue_pass: bool = False) -> dict[str, Any]:
-    if llm is None:
+def _call_extract(chunk: str, continue_pass: bool = False, llm_client: Any | None = None, model_id: str = "") -> dict[str, Any]:
+    use = llm_client or llm
+    use_model = model_id or model
+    if use is None:
         return {}
     prompt = _render(EXTRACT_CONTINUE_PROMPT if continue_pass else EXTRACT_PROMPT, chunk)
     try:
-        response = llm.chat.completions.create(
-            model=model,
+        response = use.chat.completions.create(
+            model=use_model,
             temperature=0,
             timeout=90,
             messages=[{"role": "system", "content": EXTRACT_SYSTEM}, {"role": "user", "content": prompt}],
@@ -156,7 +160,7 @@ def _call_extract(chunk: str, continue_pass: bool = False) -> dict[str, Any]:
         return {}
     data = _parse_json(raw)
     if not data and raw.strip():
-        data = _repair_json(raw)
+        data = _repair_json(raw, llm_client=use, model_id=use_model)
     return data
 
 
@@ -255,27 +259,33 @@ def _merge(all_entities: list[Any], all_relations: list[Any]) -> dict[str, Any]:
     }
 
 
-def _extract_chunk(chunk: str) -> tuple[list[Any], list[Any]]:
+def _extract_chunk(chunk: str, llm_client: Any | None = None, model_id: str = "") -> tuple[list[Any], list[Any]]:
     """Extract (entities, relations) from one chunk, including the gleanings pass."""
-    data = _call_extract(chunk)
+    data = _call_extract(chunk, llm_client=llm_client, model_id=model_id)
     entities = list(data.get("entities") or [])
     relations = list(data.get("relations") or [])
     # Gleanings: if a chunk hit the cap, ask once more for what was missed.
     if len(entities) >= MAX_ENTITIES_PER_CHUNK or len(relations) >= MAX_RELATIONS_PER_CHUNK:
-        more = _call_extract(chunk, continue_pass=True)
+        more = _call_extract(chunk, continue_pass=True, llm_client=llm_client, model_id=model_id)
         entities += more.get("entities") or []
         relations += more.get("relations") or []
     return entities, relations
 
 
-def extract(text: str, max_text: int = 12000, chunk_limit: int = 1200, workers: int | None = None) -> dict[str, Any]:
+def extract(text: str, max_text: int = 12000, chunk_limit: int = 1200,
+            workers: int | None = None, provider: str = "") -> dict[str, Any]:
     """Return {"entities": [...], "relations": [...]} for a text block.
 
     Runs chunked extraction with a gleanings pass, then merges the results.
     Chunks are extracted concurrently (bounded thread pool) since each chunk is
     an independent LLM call; set ``workers`` or ``EXTRACT_WORKERS`` to tune it.
+    ``provider`` pins the extraction to one chain member ("nous", "zen",
+    "openrouter" or a model name); unknown names fall back to the default chain.
     """
-    if llm is None:
+    pinned_client, pinned_model = client_for_provider(provider)
+    use_client = pinned_client or llm
+    use_model = pinned_model or model
+    if use_client is None:
         return {"entities": [], "relations": []}
     snippet = (text or "").strip()[:max_text]
     chunks = chunk_text(snippet, limit=chunk_limit)
@@ -285,9 +295,11 @@ def extract(text: str, max_text: int = 12000, chunk_limit: int = 1200, workers: 
     n_workers = int(workers) if workers is not None else _EXTRACT_WORKERS
     if n_workers > 1 and len(chunks) > 1:
         with ThreadPoolExecutor(max_workers=min(n_workers, len(chunks))) as pool:
-            chunk_results = list(pool.map(_extract_chunk, chunks))
+            chunk_results = list(
+                pool.map(lambda c: _extract_chunk(c, llm_client=use_client, model_id=use_model), chunks)
+            )
     else:
-        chunk_results = [_extract_chunk(chunk) for chunk in chunks]
+        chunk_results = [_extract_chunk(chunk, llm_client=use_client, model_id=use_model) for chunk in chunks]
 
     all_entities: list[Any] = []
     all_relations: list[Any] = []
