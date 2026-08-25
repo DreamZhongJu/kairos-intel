@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request
 
 from kairos.agent import runtime as agent_runtime
 from kairos.infrastructure import settings
+from kairos.infrastructure.llm import build_client_optional
 from kairos.knowledge import engine as kg_engine
 from kairos.knowledge import ingest as kg_ingest
 
@@ -242,6 +243,47 @@ def create_app() -> Flask:
             limit=limit,
         )
         return jsonify(result)
+
+    @app.post("/v1/chat/completions")
+    def openai_compat_chat():
+        """OpenAI-compatible passthrough onto the failover LLM chain.
+
+        Lets OpenAI-protocol clients (e.g. the Koishi bot's openai-like
+        adapter) reuse Kairós's provider chain (ox-alpha -> zen -> deepseek)
+        without holding their own keys or re-implementing failover.
+        Always non-streaming: the ``stream`` flag is ignored and the whole
+        completion is returned at once. Sampling params pass through when
+        present; unknown fields are dropped.
+        """
+        if not _authorized():
+            return jsonify({"error": {"message": "unauthorized", "type": "auth_error"}}), 401
+        data = request.get_json(silent=True) or {}
+        messages = data.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return (
+                jsonify({"error": {"message": "'messages' array is required", "type": "invalid_request_error"}}),
+                400,
+            )
+        client = build_client_optional()
+        if client is None:
+            return (
+                jsonify({"error": {"message": "no model provider configured", "type": "server_error"}}),
+                503,
+            )
+        kwargs: dict = {}
+        for key in ("temperature", "top_p", "max_tokens", "tools", "tool_choice"):
+            if key in data and data[key] is not None:
+                kwargs[key] = data[key]
+        try:
+            resp = client.chat.completions.create(messages=messages, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — upstream/provider errors
+            return (
+                jsonify({"error": {"message": f"upstream failed: {exc}"[:400], "type": "upstream_error"}}),
+                502,
+            )
+        payload = resp.model_dump()
+        payload.setdefault("model", data.get("model") or "kairos-chain")
+        return jsonify(payload)
 
     return app
 

@@ -56,8 +56,9 @@ EXTRACT_PROMPT = """从下面的文本中抽取知识图谱的实体与关系。
 2. 每个实体输出：name（规范实体名）、type（来自词汇表）、description（一句话说明，30 字以内）。
 3. 关系两端必须都是【本段已列出的实体】：subject 与 object 用实体的 name 精确对应。
 4. 每条关系输出：subject、predicate（具体中文动词，如"使用/实现/依赖/涉及/采用/位于/属于/触发"）、object、confidence（1-10 的整数，越确定越高）。
-5. 最多输出 __MAX_ENTITIES__ 个实体、__MAX_RELATIONS__ 条关系。只输出一个 JSON 对象，格式：
-{"entities":[{"name":"项目A","type":"项目","description":"Java Spring Boot 实现的本地服务端"}],"relations":[{"subject":"项目A","predicate":"使用","object":"Java","confidence":9}]}
+5. 若文本中有明确的时间线索（如"2023年""去年九月""高二时""上学期"），为对应关系补充 time_start 与 time_end 字段，格式 YYYY-MM-DD 或 YYYY；无法确定具体时间的字段省略。仍在持续的关系省略 time_end。绝不臆造时间。
+6. 最多输出 __MAX_ENTITIES__ 个实体、__MAX_RELATIONS__ 条关系。只输出一个 JSON 对象，格式：
+{"entities":[{"name":"项目A","type":"项目","description":"Java Spring Boot 实现的本地服务端"}],"relations":[{"subject":"项目A","predicate":"使用","object":"Java","confidence":9,"time_start":"2024-03","time_end":"2024-08"}]}
 若没有可抽取的内容，输出 {"entities":[],"relations":[]}。
 
 文本：
@@ -178,6 +179,28 @@ def _clean_entities(raw: list[Any]) -> list[dict[str, str]]:
     return entities
 
 
+def _clean_time(value: Any) -> str | None:
+    """Keep only plausible date fragments (YYYY or YYYY-MM or YYYY-MM-DD)."""
+    text = str(value or "").strip()
+    m = re.match(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?", text)
+    if not m:
+        return None
+    year = int(m.group(1))
+    if not 1990 <= year <= 2035:  # group-chat era guard against hallucinated years
+        return None
+    out = str(year)
+    if m.group(2):
+        month = int(m.group(2))
+        if not 1 <= month <= 12:
+            return out
+        out += f"-{month:02d}"
+        if m.group(3):
+            day = int(m.group(3))
+            if 1 <= day <= 31:
+                out += f"-{day:02d}"
+    return out
+
+
 def _merge(all_entities: list[Any], all_relations: list[Any]) -> dict[str, Any]:
     """Normalize, dedupe, and cross-check endpoints across every chunk."""
     entities = _clean_entities(all_entities)
@@ -208,12 +231,16 @@ def _merge(all_entities: list[Any], all_relations: list[Any]) -> dict[str, Any]:
             confidence = int(item.get("confidence") or 1)
         except (TypeError, ValueError):
             confidence = 1
+        t_start = _clean_time(item.get("time_start"))
+        t_end = _clean_time(item.get("time_end"))
         relations.append(
             {
                 "subject": canonical[subject_norm],
                 "predicate": predicate[:40],
                 "object": canonical[object_norm],
                 "confidence": max(1, min(10, confidence)),
+                "time_start": t_start,
+                "time_end": t_end,
             }
         )
 

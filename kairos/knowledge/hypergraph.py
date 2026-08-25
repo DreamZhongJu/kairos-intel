@@ -72,6 +72,8 @@ _NOISE_SQL = ",".join(f"'{p}'" for p in NOISE)
 _MINING_SQL = f"""
 SELECT r1.subject_id AS s, r1.predicate AS p1, r1.object_id AS m,
        r2.predicate AS p2, r2.object_id AS o,
+       r1.valid_from AS v1s, r1.valid_to AS v1e,
+       r2.valid_from AS v2s, r2.valid_to AS v2e,
        e1.name AS sn, e1.type AS st, e1.canonical AS sc,
        e2.name AS mn, e2.type AS mt, e2.canonical AS mc,
        e3.name AS oname, e3.type AS ot, e3.canonical AS oc
@@ -118,6 +120,14 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
         hid = hashlib.sha1(sig.encode()).hexdigest()[:16]
         if hid in chains:
             continue
+        # Chain validity interval = intersection of the two hops' intervals
+        # (Zep-style t_valid). Empty bounds mean open-ended.
+        since_parts = [v for v in (row["v1s"], row["v2s"]) if v]
+        until_parts = [v for v in (row["v1e"], row["v2e"]) if v]
+        chain_since = max(since_parts) if since_parts else None
+        chain_until = min(until_parts) if until_parts else None
+        if chain_since and chain_until and chain_until < chain_since:
+            continue  # hops contradict each other in time — not a stable chain
         chains[hid] = {
             "id": hid,
             "entity_ids": [int(row["s"]), int(row["m"]), int(row["o"])],
@@ -129,6 +139,8 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
             "end_id": int(row["o"]),
             "confidence": conf,
             "signature": sig,
+            "since": chain_since,
+            "until": chain_until,
         }
     out = sorted(chains.values(), key=lambda c: -c["confidence"])
     return out[:limit] if limit else out
@@ -169,12 +181,15 @@ def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
         ON CREATE SET h.predicates=$preds, h.names=$names, h.types=$types,
             h.entity_ids=$eids, h.start_id=$sid, h.end_id=$oid,
             h.confidence=$conf, h.n_pos=1, h.source=$src, h.created_at=$now,
-            h.signature=$sig
-        ON MATCH SET h.n_pos = coalesce(h.n_pos,1)+1
+            h.signature=$sig, h.since=$since, h.until=$until
+        ON MATCH SET h.n_pos = coalesce(h.n_pos,1)+1,
+            h.since=coalesce(h.since,$since),
+            h.until=coalesce(h.until,$until)
         """,
         id=c["id"], preds=c["predicates"], names=c["names"], types=c["types"],
         eids=c["entity_ids"], sid=c["start_id"], oid=c["end_id"],
         conf=c["confidence"], src=source, sig=c["signature"],
+        since=c.get("since"), until=c.get("until"),
         now=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
     for i, eid in enumerate(c["entity_ids"]):
@@ -226,22 +241,29 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
             WHERE e.id IN $seed_ids OR e.id IN $nbr_ids
             RETURN h.id AS hid, h.names AS names, h.types AS types,
                    h.predicates AS preds, h.confidence AS conf,
+                   h.since AS since, h.until AS until,
                    collect(e.id) AS member_ids
             """,
             seed_ids=seed_ids, nbr_ids=nbr_ids,
         ).data()
 
+    today = time.strftime("%Y-%m-%d")
     scored = []
     for r in rows:
         members = set(r["member_ids"])
         direct = len(members.intersection(seed_ids))
         neighbor = len(members.intersection(nbr_ids))
-        score = (direct * 0.7 + min(neighbor, 2) * 0.3) * float(r["conf"] or 0)
+        conf = float(r["conf"] or 0)
+        until = r.get("until")
+        expired = bool(until and until < today)
+        eff_conf = conf * (0.3 if expired else 1.0)
+        score = (direct * 0.7 + min(neighbor, 2) * 0.3) * eff_conf
         if direct == 0:
             score *= 0.5  # neighbor-only chains must not outrank direct hits
         scored.append({
             "names": r["names"], "types": r["types"], "predicates": r["preds"],
-            "confidence": r["conf"], "direct": direct, "neighbor": neighbor,
+            "confidence": conf, "direct": direct, "neighbor": neighbor,
+            "since": r.get("since"), "until": until, "expired": expired,
             "score": round(score, 4),
             "chain": " -> ".join(
                 f"{r['names'][i]} --[{r['preds'][i]}]--> {r['names'][i + 1]}"

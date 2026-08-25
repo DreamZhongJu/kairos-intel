@@ -62,6 +62,24 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(object_id)",
 ]
 
+# Column migrations applied after CREATE statements; idempotent.
+_MIGRATIONS = [
+    ("relations", "valid_from", "ALTER TABLE relations ADD COLUMN valid_from TEXT"),
+    ("relations", "valid_to", "ALTER TABLE relations ADD COLUMN valid_to TEXT"),
+]
+
+
+def _apply_migrations() -> None:
+    con = _connect()
+    try:
+        for table, column, ddl in _MIGRATIONS:
+            cols = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column not in cols:
+                con.execute(ddl)
+        con.commit()
+    finally:
+        con.close()
+
 
 def _fts_supported() -> bool:
     try:
@@ -90,6 +108,7 @@ def init() -> None:
                 con.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, tokenize='trigram')"
                 )
+            _apply_migrations()
             con.commit()
         finally:
             con.close()
@@ -236,8 +255,15 @@ def upsert_entity(name: str, etype: str = "entity", canonical: str | None = None
         con.close()
 
 
-def add_relation_by_ids(subject_id: int, predicate: str, object_id: int, confidence: int = 1) -> bool:
-    """Insert a relation between two known entity ids (deterministic edges)."""
+def add_relation_by_ids(
+    subject_id: int,
+    predicate: str,
+    object_id: int,
+    confidence: int = 1,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+) -> bool:
+    """Insert a relation between two known ids (deterministic edges)."""
     predicate = (predicate or "").strip()[:40]
     sid, oid = int(subject_id), int(object_id)
     if not predicate or sid == oid:
@@ -249,10 +275,27 @@ def add_relation_by_ids(subject_id: int, predicate: str, object_id: int, confide
             (sid, predicate, oid),
         ).fetchone()
         if exists:
-            return False
+            # Same triple seen again: merge any newly-observed validity bounds
+            # into EVERY duplicate row of the triple (historical dedup leaves
+            # a few behind), without clobbering known ones.
+            con.execute(
+                "UPDATE relations SET valid_from=coalesce(?, valid_from), valid_to=coalesce(?, valid_to) "
+                "WHERE subject_id=? AND predicate=? AND object_id=?",
+                (valid_from or None, valid_to or None, sid, predicate, oid),
+            )
+            con.commit()
+            return True
         con.execute(
-            "INSERT INTO relations (subject_id, predicate, object_id, confidence) VALUES (?,?,?,?)",
-            (sid, predicate, oid, max(1, min(10, int(confidence)))),
+            "INSERT INTO relations (subject_id, predicate, object_id, confidence, valid_from, valid_to) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                sid,
+                predicate,
+                oid,
+                max(1, min(10, int(confidence))),
+                (valid_from or None),
+                (valid_to or None),
+            ),
         )
         con.commit()
         return True
@@ -260,7 +303,15 @@ def add_relation_by_ids(subject_id: int, predicate: str, object_id: int, confide
         con.close()
 
 
-def add_relation(subject: str, predicate: str, obj: str, chunk_id: int | None = None, confidence: int = 1) -> None:
+def add_relation(
+    subject: str,
+    predicate: str,
+    obj: str,
+    chunk_id: int | None = None,
+    confidence: int = 1,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+) -> None:
     subject_id = upsert_entity(subject)
     object_id = upsert_entity(obj)
     con = _connect()
@@ -270,10 +321,27 @@ def add_relation(subject: str, predicate: str, obj: str, chunk_id: int | None = 
             (subject_id, predicate, object_id),
         ).fetchone()
         if exists:
+            # Merge newly-observed validity bounds into every duplicate row
+            # of the triple, without clobbering known ones.
+            con.execute(
+                "UPDATE relations SET valid_from=coalesce(?, valid_from), valid_to=coalesce(?, valid_to) "
+                "WHERE subject_id=? AND predicate=? AND object_id=?",
+                (valid_from or None, valid_to or None, subject_id, predicate, object_id),
+            )
+            con.commit()
             return
         con.execute(
-            "INSERT INTO relations (subject_id, predicate, object_id, source_chunk_id, confidence) VALUES (?,?,?,?,?)",
-            (subject_id, predicate, object_id, chunk_id, confidence),
+            "INSERT INTO relations (subject_id, predicate, object_id, source_chunk_id, confidence, valid_from, valid_to) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                subject_id,
+                predicate,
+                object_id,
+                chunk_id,
+                confidence,
+                (valid_from or None),
+                (valid_to or None),
+            ),
         )
         con.commit()
     finally:

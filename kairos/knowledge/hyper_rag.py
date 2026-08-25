@@ -117,7 +117,12 @@ def link_entities(q: str, max_entities: int = _MAX_ENTITIES) -> list[dict[str, A
 
 
 def format_evidence(hits: list[dict[str, Any]]) -> list[str]:
-    """Hyperedge chains -> concise Chinese evidence lines for prompt injection."""
+    """Hyperedge chains -> concise Chinese evidence lines for prompt injection.
+
+    Time-aware: validity ranges render inline (「2023~2025」) and expired
+    chains get an explicit 「已失效」 marker so the bot won't present stale
+    facts as current.
+    """
     lines: list[str] = []
     for h in hits:
         names = h.get("names") or []
@@ -130,7 +135,17 @@ def format_evidence(hits: list[dict[str, Any]]) -> list[str]:
             segs.append(f"{p}{nxt}")
         conf = float(h.get("confidence") or 0)
         line = "".join(segs)
-        lines.append(f"- {line}（置信{conf:.2f}）")
+        since, until = h.get("since"), h.get("until")
+        if since and until:
+            span = f"（{since}~{until}）"
+        elif since:
+            span = f"（自{since}）"
+        elif until:
+            span = f"（至{until}）"
+        else:
+            span = ""
+        expired = "【已失效】" if h.get("expired") else ""
+        lines.append(f"- {expired}{line}{span}（置信{conf:.2f}）")
     return lines
 
 

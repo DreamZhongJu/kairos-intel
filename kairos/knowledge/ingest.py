@@ -10,6 +10,7 @@ standard chunked/gleanings extraction pipeline for topics and relations.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any
 
 from kairos.infrastructure import settings
@@ -18,6 +19,10 @@ from kairos.knowledge import extract as kg_extract
 from kairos.knowledge.privacy import pseudonymize_messages
 
 LOG = logging.getLogger("kairos.knowledge.ingest")
+
+
+def _today() -> str:
+    return date.today().isoformat()
 
 
 def _msg_text(item: dict[str, Any]) -> str:
@@ -89,7 +94,12 @@ def ingest_chat_window(
     for rel in relations:
         try:
             engine.add_relation(
-                rel["subject"], rel["predicate"], rel["object"], confidence=int(rel.get("confidence", 1))
+                rel["subject"],
+                rel["predicate"],
+                rel["object"],
+                confidence=int(rel.get("confidence", 1)),
+                valid_from=rel.get("time_start"),
+                valid_to=rel.get("time_end"),
             )
         except Exception:  # noqa: BLE001
             pass
@@ -98,7 +108,8 @@ def ingest_chat_window(
     members_linked = 0
     for pid in sorted(set(persons.values())):
         try:
-            if engine.add_relation_by_ids(pid, "活跃于", group_id):
+            # Membership is observed "now" and stays open-ended.
+            if engine.add_relation_by_ids(pid, "活跃于", group_id, valid_from=_today()):
                 members_linked += 1
         except Exception:  # noqa: BLE001
             pass
