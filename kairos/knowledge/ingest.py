@@ -148,6 +148,17 @@ def query_knowledge(q: str = "", entity: str = "", limit: int = 6) -> dict[str, 
         for hit in engine.keyword_search(q, limit=limit):
             chunks.append({"title": hit.get("title") or "未命名文档", "text": (hit.get("text") or "")[:400]})
 
+    # Hyper-RAG: link entities from the raw question and pull reasoning-chain
+    # evidence — runs even when the caller did not supply an entity.
+    hyper: dict[str, Any] = {"linked": [], "evidence": []}
+    if q:
+        try:
+            from kairos.knowledge import hyper_rag
+
+            hyper = hyper_rag.hyper_query(q)
+        except Exception:  # noqa: BLE001
+            hyper = {"linked": [], "hits": [], "evidence": []}
+
     graph: dict[str, Any] = {"entity": entity, "found": False, "lines": []}
     if entity and neo4j_used:
         try:
@@ -178,6 +189,10 @@ def query_knowledge(q: str = "", entity: str = "", limit: int = 6) -> dict[str, 
 
     # Assemble a plain-text answer block for bots that just want to reply.
     parts: list[str] = []
+    if hyper.get("evidence"):
+        linked_names = "、".join(e["name"] for e in hyper.get("linked", []))
+        parts.append(f"【推理链证据】（关联：{linked_names}）")
+        parts.extend(hyper["evidence"])
     if chunks:
         parts.append("【知识片段】")
         for c in chunks[:6]:
@@ -190,4 +205,7 @@ def query_knowledge(q: str = "", entity: str = "", limit: int = 6) -> dict[str, 
     if not parts:
         parts.append("知识库中没有匹配的内容。")
 
-    return {"query": q, "entity": entity, "chunks": chunks, "graph": graph, "answer": "\n".join(parts)}
+    return {"query": q, "entity": entity, "chunks": chunks, "graph": graph,
+            "hyper": {"linked": hyper.get("linked", []), "hits": hyper.get("hits", []),
+                      "evidence": hyper.get("evidence", [])},
+            "answer": "\n".join(parts)}

@@ -236,7 +236,9 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
         members = set(r["member_ids"])
         direct = len(members.intersection(seed_ids))
         neighbor = len(members.intersection(nbr_ids))
-        score = (direct * 0.6 + min(neighbor, 4) * 0.4) * float(r["conf"] or 0)
+        score = (direct * 0.7 + min(neighbor, 2) * 0.3) * float(r["conf"] or 0)
+        if direct == 0:
+            score *= 0.5  # neighbor-only chains must not outrank direct hits
         scored.append({
             "names": r["names"], "types": r["types"], "predicates": r["preds"],
             "confidence": r["conf"], "direct": direct, "neighbor": neighbor,
