@@ -34,13 +34,13 @@ PALETTE = [
 ]
 
 TEMPLATE = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kairos KG - Louvain</title>
-<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"><\\/script>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>html,body{height:100%;margin:0}#m{width:100%;height:100%}
 #lg{position:fixed;top:10px;left:10px;background:rgba(255,255,255,.92);padding:8px 12px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.15)}
 #hint{position:fixed;bottom:10px;left:10px;background:rgba(255,255,255,.85);padding:6px 10px;border-radius:8px;font:12px sans-serif}</style></head><body>
 <div id="m"></div>
-<div id="lg"><b>Louvain \\u793e\\u533a\\u53d1\\u73b0</b>__NCOMM__ \\u4e2a\\u793e\\u533a\\u5206\\u522b\\u7740\\u8272\\uff0c\\u70b9\\u51fb\\u8282\\u70b9\\u805a\\u7126\\u67e5\\u770b</div>
-<div id="hint">\\u62d6\\u62fd\\u65cb\\u8f6c / \\u6eda\\u8f6e\\u7f29\\u653e | \\u8282\\u70b9\\u5927\\u5c0f=\\u5173\\u7cfb\\u6570 \\u989c\\u8272=\\u793e\\u533a</div>
+<div id="lg"><b>Louvain 社区发现</b><span id="nc"></span> 个社区分别着色，点击节点聚焦查看</div>
+<div id="hint">拖拽旋转 / 滚轮缩放 | 节点大小=关系数 颜色=社区</div>
 <script>
 var nodes = new vis.DataSet(NODES_JSON);
 var edges = new vis.DataSet(EDGES_JSON);
@@ -48,7 +48,8 @@ var net = new vis.Network(document.getElementById("m"), {nodes:nodes, edges:edge
  {physics:{solver:"forceAtlas2Based", forceAtlas2Based:{gravitationalConstant:-60, springLength:120}, stabilization:{iterations:400}},
   interaction:{hover:true, tooltipDelay:120}, edges:{selectionWidth:2}});
 net.on("click", function(p){ if(p.nodes.length){ net.focus(p.nodes[0], {scale:1.2}); } });
-<\\/script></body></html>"""
+document.getElementById("nc").textContent = __NCOMM__;
+</script></body></html>"""
 
 
 def build_graph():
