@@ -137,34 +137,54 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
 # --- persistence into Neo4j ---------------------------------------------------
 
 def save_hyper_edges(chains: list[dict[str, Any]], source: str = "chain_mining") -> int:
-    """Idempotent upsert; repeated chains increment n_pos."""
+    """Idempotent upsert; repeated chains increment n_pos.
+
+    Each chain is its own short transaction with deadlock retry — the Neo4j
+    mirror may be writing concurrently (post-ingest resync).
+    """
+    import time as _time
+
     saved = 0
-    with graph_store._driver().session() as s:
-        for c in chains:
-            s.run(
-                """
-                MERGE (h:HyperEdge {id: $id})
-                ON CREATE SET h.predicates=$preds, h.names=$names, h.types=$types,
-                    h.entity_ids=$eids, h.start_id=$sid, h.end_id=$oid,
-                    h.confidence=$conf, h.n_pos=1, h.source=$src, h.created_at=$now,
-                    h.signature=$sig
-                ON MATCH SET h.n_pos = coalesce(h.n_pos,1)+1
-                """,
-                id=c["id"], preds=c["predicates"], names=c["names"], types=c["types"],
-                eids=c["entity_ids"], sid=c["start_id"], oid=c["end_id"],
-                conf=c["confidence"], src=source, sig=c["signature"],
-                now=time.strftime("%Y-%m-%d %H:%M:%S"),
-            )
-            for i, eid in enumerate(c["entity_ids"]):
-                s.run(
-                    """
-                    MATCH (e:Entity {id:$eid}), (h:HyperEdge {id:$hid})
-                    MERGE (e)-[r:IN_HEDGE]->(h) SET r.order=$i
-                    """,
-                    eid=eid, hid=c["id"], i=i,
-                )
-            saved += 1
+    driver = graph_store._driver()
+    for c in chains:
+        for attempt in range(4):
+            try:
+                with driver.session() as s:
+                    s.execute_write(lambda tx: _upsert_one(tx, c, source))
+                saved += 1
+                break
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                if ("DeadlockDetected" in msg or "TransientError" in msg) and attempt < 3:
+                    _time.sleep(0.5 * (attempt + 1))
+                    continue
+                raise
     return saved
+
+
+def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
+    tx.run(
+        """
+        MERGE (h:HyperEdge {id: $id})
+        ON CREATE SET h.predicates=$preds, h.names=$names, h.types=$types,
+            h.entity_ids=$eids, h.start_id=$sid, h.end_id=$oid,
+            h.confidence=$conf, h.n_pos=1, h.source=$src, h.created_at=$now,
+            h.signature=$sig
+        ON MATCH SET h.n_pos = coalesce(h.n_pos,1)+1
+        """,
+        id=c["id"], preds=c["predicates"], names=c["names"], types=c["types"],
+        eids=c["entity_ids"], sid=c["start_id"], oid=c["end_id"],
+        conf=c["confidence"], src=source, sig=c["signature"],
+        now=time.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    for i, eid in enumerate(c["entity_ids"]):
+        tx.run(
+            """
+            MATCH (e:Entity {id:$eid}), (h:HyperEdge {id:$hid})
+            MERGE (e)-[r:IN_HEDGE]->(h) SET r.order=$i
+            """,
+            eid=eid, hid=c["id"], i=i,
+        )
 
 
 # --- online retrieval ---------------------------------------------------------

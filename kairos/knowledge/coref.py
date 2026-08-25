@@ -2,14 +2,23 @@
 
 Root cause this fixes: deterministic speaker nodes get canonical="qq:<uid>"
 while LLM-extracted person mentions fall back to canonical=<raw name>, so the
-same human splits into several nodes. The registry below maps every known
-alias to its authoritative canonical so upsert can route mentions to the
-existing person node instead of forking a new one.
+same human splits into several nodes.
 
-Sources (highest priority first):
-1. ``data/coref_overrides.json`` — manual assertions {"alias": "qq:<uid>"}
-2. ``data/nickmap.json``          — nickname -> uid evidence from exports
-3. entities table                 — current name of every qq:* person node
+Two resolution contexts with different evidence standards:
+
+- ``resolve_speaker`` — who sent this message? The nickname->uid evidence from
+  chat exports is authoritative here (the speaker themselves typed it).
+- ``resolve_mention`` — does a person *mentioned in text* refer to a known
+  user? Ambiguous: group members often use fictional-character names as
+  nicknames ("十六夜咲夜"), so only manual assertions and exact current
+  display names may route mentions. Nickname evidence is deliberately NOT
+  used here to avoid merging Touhou characters into the users named after
+  them.
+
+Sources for ``resolve_mention`` (highest priority first):
+1. ``data/coref_overrides.json`` — {"alias": "qq:<uid>"} asserts;
+   an empty-string value means "protected: never merge this name".
+2. entities table — current display name of every qq:* person node.
 """
 
 from __future__ import annotations
@@ -24,6 +33,8 @@ from kairos.infrastructure.settings import DATA_DIR
 _CACHE_TTL = 300.0
 _registry: dict[str, str] | None = None
 _registry_at = 0.0
+_mention_registry: dict[str, str] | None = None
+_mention_at = 0.0
 
 
 def _read_json(path: Path) -> dict:
@@ -33,9 +44,8 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
-def _build_registry() -> dict[str, str]:
+def _display_name_map() -> dict[str, str]:
     reg: dict[str, str] = {}
-    # weakest: current display names of deterministic person nodes
     try:
         from kairos.knowledge import engine
 
@@ -51,38 +61,79 @@ def _build_registry() -> dict[str, str]:
                 reg[r["name"].strip()] = r["canonical"]
     except Exception:  # noqa: BLE001
         pass
-    # stronger: export-derived nickname evidence
-    nickmap_path = Path(__file__).resolve().parents[2] / "data" / "nickmap.json"
-    container_fallback = DATA_DIR / "nickmap.json"
-    for p in (nickmap_path, container_fallback):
-        for nick, uid in _read_json(p).items():
-            nick = str(nick).strip()
-            if nick and str(uid).strip():
-                reg[nick] = f"qq:{str(uid).strip()}"
-    # strongest: manual assertions win over everything
-    for alias, canon in _read_json(DATA_DIR / "coref_overrides.json").items():
-        alias = str(alias).strip()
-        canon = str(canon).strip()
-        if alias and canon:
-            reg[alias] = canon
     return reg
 
 
 def _get_registry() -> dict[str, str]:
+    """Full alias map (nickname evidence included) — speaker attribution only."""
     global _registry, _registry_at
     now = time.time()
     if _registry is None or now - _registry_at > _CACHE_TTL:
-        _registry = _build_registry()
+        reg: dict[str, str] = dict(_display_name_map())
+        nickmap_path = Path(__file__).resolve().parents[2] / "data" / "nickmap.json"
+        container_fallback = DATA_DIR / "nickmap.json"
+        for p in (nickmap_path, container_fallback):
+            for nick, uid in _read_json(p).items():
+                nick = str(nick).strip()
+                if nick and str(uid).strip():
+                    reg[nick] = f"qq:{str(uid).strip()}"
+        _registry = reg
         _registry_at = now
     return _registry
 
 
-def resolve_person(name: str) -> str | None:
-    """Return the authoritative canonical ('qq:<uid>') for a person mention."""
+def _get_mention_registry() -> dict[str, str]:
+    """Conservative mention map: manual assertions + display names only.
+
+    An override value of "" marks the name as protected — resolution is
+    forbidden even if other evidence exists.
+    """
+    global _mention_registry, _mention_at
+    now = time.time()
+    if _mention_registry is None or now - _mention_at > _CACHE_TTL:
+        reg = dict(_display_name_map())
+        for alias, canon in _read_json(DATA_DIR / "coref_overrides.json").items():
+            alias = str(alias).strip()
+            canon = str(canon).strip()
+            if not alias:
+                continue
+            if canon:
+                reg[alias] = canon
+            else:
+                reg.pop(alias, None)
+        _mention_registry = reg
+        _mention_at = now
+    return _mention_registry
+
+
+def invalidate_cache() -> None:
+    global _registry, _registry_at, _mention_registry, _mention_at
+    _registry = None
+    _mention_registry = None
+    _registry_at = 0.0
+    _mention_at = 0.0
+
+
+def resolve_speaker(name: str) -> str | None:
+    """Authoritative canonical for the sender of a message (nickname evidence allowed)."""
     n = (name or "").strip()
     if not n:
         return None
     canon = _get_registry().get(n)
+    return canon or None
+
+
+def resolve_person(name: str) -> str | None:
+    """Alias kept for compatibility; conservative mention-level resolution."""
+    return resolve_mention(name)
+
+
+def resolve_mention(name: str) -> str | None:
+    """Conservative canonical for a person *mentioned in text*."""
+    n = (name or "").strip()
+    if not n:
+        return None
+    canon = _get_mention_registry().get(n)
     return canon or None
 
 
@@ -127,10 +178,16 @@ def merge_entity(old_id: int, target_id: int) -> dict[str, int]:
     return {"moved": moved, "dropped_dupes": dropped}
 
 
-def sweep_bare_persons(dry_run: bool = False) -> dict[str, Any]:
+def sweep_bare_persons(dry_run: bool = False, mention_level: bool = True) -> dict[str, Any]:
     """Find person nodes whose canonical lacks the qq:/group: prefix and try
-    to resolve each via the registry; merge hits into their canonical node."""
+    to resolve each; merge hits into their canonical node.
+
+    ``mention_level=True`` uses only the conservative mention registry so the
+    sweep never repeats the character-name over-merge incident.
+    """
     from kairos.knowledge import engine
+
+    resolver = resolve_mention if mention_level else resolve_speaker
 
     con = engine._connect()
     try:
@@ -141,10 +198,10 @@ def sweep_bare_persons(dry_run: bool = False) -> dict[str, Any]:
     finally:
         con.close()
 
-    report = {"scanned": len(rows), "merged": [], "unresolved": []}
+    report: dict[str, Any] = {"scanned": len(rows), "merged": [], "unresolved": []}
     for r in rows:
-        canon = resolve_person(r["name"]) or (
-            resolve_person(r["canonical"]) if r["canonical"] else None
+        canon = resolver(r["name"]) or (
+            resolver(r["canonical"]) if r["canonical"] else None
         )
         if not canon:
             report["unresolved"].append({"id": r["id"], "name": r["name"], "canonical": r["canonical"]})
@@ -160,8 +217,6 @@ def sweep_bare_persons(dry_run: bool = False) -> dict[str, Any]:
                 con = engine._connect()
                 try:
                     con.execute("UPDATE entities SET canonical=? WHERE id=?", (canon, r["id"]))
-                    con.execute("UPDATE entities SET name=? WHERE id=? AND name LIKE 'qq:%'",
-                                (r["name"], r["id"]))
                     con.commit()
                 finally:
                     con.close()
