@@ -30,11 +30,15 @@ function createGraphTool(ctx, config) {
     try {
       const url = `${config.kairosEndpoint}/api/knowledge/query?q=${encodeURIComponent(q)}`
       const headers = config.apiToken ? { 'X-Token': config.apiToken } : {}
-      const response = await ctx.http.axios(url, {
-        method: 'GET', headers, timeout: config.timeoutMs,
-        validateStatus: (s) => s >= 200 && s < 300,
+      // Node native fetch on purpose: it bypasses both the env proxy and the
+      // global koishi proxy-agent, either of which would route this intranet
+      // request through clash and break it.
+      const response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(config.timeoutMs),
       })
-      const data = response.data || {}
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json()
       const evidence = (data.hyper && data.hyper.evidence) || []
       if (!evidence.length) {
         const graphLines = (data.graph && data.graph.lines) || []
