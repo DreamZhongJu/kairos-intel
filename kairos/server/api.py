@@ -8,9 +8,10 @@ is served at /openapi.json.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 
 from kairos.agent import runtime as agent_runtime
 from kairos.infrastructure import settings
@@ -228,6 +229,45 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:  # noqa: BLE001
             return jsonify({"error": str(exc)}), 500
+
+    @app.get("/graph")
+    def graph_viz_page():
+        """Interactive Louvain community visualization (regenerate via
+        scripts/graph_analytics.py inside the container)."""
+        path = "/app/data/graph_viz.html"
+        if os.path.exists(path):
+            return send_file(path)
+        return jsonify({"error": "not generated; run scripts/graph_analytics.py"}), 404
+
+    @app.get("/api/knowledge/community")
+    def knowledge_community():
+        """Louvain community lookup: which circle an entity belongs to,
+        that circle's top members, and the cross-community bridge people."""
+        if not _authorized():
+            return jsonify({"error": "unauthorized"}), 401
+        q = request.args.get("q", "").strip()
+        if not q:
+            return jsonify({"error": "q required"}), 400
+        path = "/app/data/graph_communities.json"
+        if not os.path.exists(path):
+            return jsonify({"error": "not generated; run scripts/graph_analytics.py"}), 404
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        names = data.get("node_names", {})
+        n2c = data.get("node_community", {})
+        hit = next((nid for nid, name in names.items() if name == q), None)
+        if hit is None:
+            hit = next((nid for nid, name in names.items() if q.lower() in name.lower()), None)
+        if hit is None:
+            return jsonify({"entity": q, "found": False})
+        cid = n2c.get(hit)
+        comm = next((c for c in data["communities"] if c["id"] == cid), None)
+        return jsonify({
+            "entity": q, "found": True, "community_id": cid,
+            "size": comm.get("size") if comm else 0,
+            "top_members": comm.get("top_members", []) if comm else [],
+            "bridges": data.get("bridges", [])[:10],
+        })
 
     @app.get("/api/knowledge/query")
     def knowledge_query():
