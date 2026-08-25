@@ -125,33 +125,53 @@ class FailoverClient:
             self._clients[idx] = client
         return client
 
+    @staticmethod
+    def _usable(resp: Any) -> bool:
+        """A response is usable when it carries visible content or tool calls.
+
+        Reasoning providers can burn the whole token budget on hidden thinking
+        and return an empty ``content`` with a normal HTTP status — treat that
+        as a soft failure and fall through to the next provider.
+        """
+        try:
+            msg = resp.choices[0].message
+        except Exception:  # noqa: BLE001
+            return True  # non-standard shape: don't second-guess
+        if getattr(msg, "tool_calls", None):
+            return True
+        content = (getattr(msg, "content", "") or "")
+        return bool(str(content).strip())
+
     def create(self, **kwargs: Any):
         now = self._now()
         order = [self._sticky] + [i for i in range(len(self._configs)) if i != self._sticky]
         last_exc: Exception | None = None
-        attempted_any = False
-        for idx in order:
+        last_resp: Any = None
+        for pos, idx in enumerate(order):
             if self._cooldown_until[idx] > now:
                 continue
-            attempted_any = True
             try:
                 call_kwargs = dict(kwargs)
                 call_kwargs["model"] = self._configs[idx].model
                 response = self._sdk(idx).chat.completions.create(**call_kwargs)
                 self._sticky = idx
-                return response
+                if self._usable(response) or pos == len(order) - 1:
+                    return response
+                last_resp = response  # empty output: try the next provider
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 self._cooldown_until[idx] = self._now() + self._cooldown
-        if not attempted_any and last_exc is None:
-            # everything cooling down: force-try the sticky one rather than die
-            try:
-                call_kwargs = dict(kwargs)
-                call_kwargs["model"] = self._configs[self._sticky].model
-                return self._sdk(self._sticky).chat.completions.create(**call_kwargs)
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-        raise last_exc or RuntimeError("no model provider available")
+        if last_resp is not None:
+            return last_resp
+        if last_exc is not None and self._cooldown_until[self._sticky] <= now:
+            pass  # a non-cooled provider already raised; nothing more to try
+        # everything cooling down (or all-empty): force-try sticky, never die
+        try:
+            call_kwargs = dict(kwargs)
+            call_kwargs["model"] = self._configs[self._sticky].model
+            return self._sdk(self._sticky).chat.completions.create(**call_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            raise last_exc or exc or RuntimeError("no model provider available")
 
     @property
     def chat(self) -> _ChatNamespace:
