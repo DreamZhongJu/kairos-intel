@@ -187,6 +187,10 @@ def upsert_entity(name: str, etype: str = "entity", canonical: str | None = None
     ``canonical`` pins a deterministic identity (e.g. "qq:123456",
     "group:830070676") so display-name changes never split the node; on an
     explicit-canonical collision the newest name wins (a rename).
+
+    Person mentions without an explicit canonical are routed through the
+    coreference registry: a known alias attaches to its existing qq:* node
+    instead of forking a bare-nickname duplicate.
     """
     name = (name or "").strip()
     if not name:
@@ -203,13 +207,28 @@ def upsert_entity(name: str, etype: str = "entity", canonical: str | None = None
                 con.execute("UPDATE entities SET name=?, type=? WHERE id=?", (name, etype, rid))
                 con.commit()
             return rid
+        resolved_canon = None
+        if not explicit and etype == "人名":
+            try:
+                from kairos.knowledge import coref
+
+                resolved_canon = coref.resolve_person(name)
+            except Exception:  # noqa: BLE001
+                resolved_canon = None
+        if resolved_canon:
+            row = con.execute(
+                "SELECT id FROM entities WHERE canonical=? LIMIT 1", (resolved_canon,)
+            ).fetchone()
+            if row:
+                return int(row["id"])  # keep existing display name; just attach
         if not explicit:
             row = con.execute("SELECT id FROM entities WHERE name=? LIMIT 1", (name,)).fetchone()
             if row:
                 return int(row["id"])
+        final_key = resolved_canon or key
         cur = con.execute(
             "INSERT INTO entities (name, type, canonical, created_at) VALUES (?,?,?,?)",
-            (name, etype, key, _now()),
+            (name, etype, final_key, _now()),
         )
         con.commit()
         return int(cur.lastrowid)
