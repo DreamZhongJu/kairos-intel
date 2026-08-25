@@ -57,8 +57,9 @@ EXTRACT_PROMPT = """从下面的文本中抽取知识图谱的实体与关系。
 3. 关系两端必须都是【本段已列出的实体】：subject 与 object 用实体的 name 精确对应。
 4. 每条关系输出：subject、predicate（具体中文动词，如"使用/实现/依赖/涉及/采用/位于/属于/触发"）、object、confidence（1-10 的整数，越确定越高）。
 5. 若文本中有明确的时间线索（如"2023年""去年九月""高二时""上学期"），为对应关系补充 time_start 与 time_end 字段，格式 YYYY-MM-DD 或 YYYY；无法确定具体时间的字段省略。仍在持续的关系省略 time_end。绝不臆造时间。
-6. 最多输出 __MAX_ENTITIES__ 个实体、__MAX_RELATIONS__ 条关系。只输出一个 JSON 对象，格式：
-{"entities":[{"name":"项目A","type":"项目","description":"Java Spring Boot 实现的本地服务端"}],"relations":[{"subject":"项目A","predicate":"使用","object":"Java","confidence":9,"time_start":"2024-03","time_end":"2024-08"}]}
+6. 【语气判断】群聊里充满玩笑与梗。对每条关系判断说话人是否当真：明显是开玩笑、调侃、反讽、自嘲、吹牛、玩梗、夸张整活的关系（如"我是你爹""他考上了清华（阴阳怪气）""这游戏好玩爆了"），输出 "playful": true 并把 confidence 压到 1-3；认真陈述省略 playful 字段。拿不准就当作认真的。
+7. 最多输出 __MAX_ENTITIES__ 个实体、__MAX_RELATIONS__ 条关系。只输出一个 JSON 对象，格式：
+{"entities":[{"name":"项目A","type":"项目","description":"Java Spring Boot 实现的本地服务端"}],"relations":[{"subject":"项目A","predicate":"使用","object":"Java","confidence":9,"time_start":"2024-03","time_end":"2024-08"},{"subject":"康哥","predicate":"毕业于","object":"清华","confidence":2,"playful":true}]}
 若没有可抽取的内容，输出 {"entities":[],"relations":[]}。
 
 文本：
@@ -233,6 +234,9 @@ def _merge(all_entities: list[Any], all_relations: list[Any]) -> dict[str, Any]:
             confidence = 1
         t_start = _clean_time(item.get("time_start"))
         t_end = _clean_time(item.get("time_end"))
+        playful = bool(item.get("playful"))
+        if playful:
+            confidence = min(confidence, 3)  # jokes never rank as solid facts
         relations.append(
             {
                 "subject": canonical[subject_norm],
@@ -241,6 +245,7 @@ def _merge(all_entities: list[Any], all_relations: list[Any]) -> dict[str, Any]:
                 "confidence": max(1, min(10, confidence)),
                 "time_start": t_start,
                 "time_end": t_end,
+                "playful": playful,
             }
         )
 

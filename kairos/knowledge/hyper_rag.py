@@ -121,7 +121,8 @@ def format_evidence(hits: list[dict[str, Any]]) -> list[str]:
 
     Time-aware: validity ranges render inline (「2023~2025」) and expired
     chains get an explicit 「已失效」 marker so the bot won't present stale
-    facts as current.
+    facts as current. Tone-aware: playful (banter) chains get a 「玩笑」
+    marker so the bot won't treat jokes as facts.
     """
     lines: list[str] = []
     for h in hits:
@@ -145,7 +146,8 @@ def format_evidence(hits: list[dict[str, Any]]) -> list[str]:
         else:
             span = ""
         expired = "【已失效】" if h.get("expired") else ""
-        lines.append(f"- {expired}{line}{span}（置信{conf:.2f}）")
+        banter = "【玩笑】" if h.get("playful") else ""
+        lines.append(f"- {expired}{banter}{line}{span}（置信{conf:.2f}）")
     return lines
 
 

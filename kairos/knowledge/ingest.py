@@ -100,6 +100,7 @@ def ingest_chat_window(
                 confidence=int(rel.get("confidence", 1)),
                 valid_from=rel.get("time_start"),
                 valid_to=rel.get("time_end"),
+                playful=bool(rel.get("playful")),
             )
         except Exception:  # noqa: BLE001
             pass

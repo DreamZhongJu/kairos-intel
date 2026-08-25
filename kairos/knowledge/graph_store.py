@@ -67,7 +67,7 @@ def sync_all(batch_size: int = 500) -> dict[str, int]:
     try:
         entities = con.execute("SELECT id, name, type, canonical FROM entities").fetchall()
         relations = con.execute(
-            "SELECT subject_id, predicate, object_id, confidence, valid_from, valid_to FROM relations"
+            "SELECT subject_id, predicate, object_id, confidence, valid_from, valid_to, is_playful FROM relations"
         ).fetchall()
         chunks = con.execute(
             "SELECT c.id, c.doc_id, c.seq, c.text, d.title FROM chunks c JOIN documents d ON c.doc_id=d.id"
@@ -135,10 +135,11 @@ def _tx_relations(tx, rows):
         tx.run(
             "MATCH (a:Entity {id:$s}), (b:Entity {id:$o}) "
             "MERGE (a)-[r:REL {predicate:$p}]->(b) "
-            "SET r.confidence=$conf, r.since=$since, r.until=$until",
+            "SET r.confidence=$conf, r.since=$since, r.until=$until, r.playful=$playful",
             s=int(row["subject_id"]), o=int(row["object_id"]),
             p=row["predicate"], conf=int(row.get("confidence") or 1),
             since=row.get("valid_from"), until=row.get("valid_to"),
+            playful=bool(row.get("is_playful")),
         )
 
 

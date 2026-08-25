@@ -66,6 +66,7 @@ SCHEMA = [
 _MIGRATIONS = [
     ("relations", "valid_from", "ALTER TABLE relations ADD COLUMN valid_from TEXT"),
     ("relations", "valid_to", "ALTER TABLE relations ADD COLUMN valid_to TEXT"),
+    ("relations", "is_playful", "ALTER TABLE relations ADD COLUMN is_playful INTEGER DEFAULT 0"),
 ]
 
 
@@ -262,12 +263,16 @@ def add_relation_by_ids(
     confidence: int = 1,
     valid_from: str | None = None,
     valid_to: str | None = None,
+    playful: bool = False,
 ) -> bool:
     """Insert a relation between two known ids (deterministic edges)."""
     predicate = (predicate or "").strip()[:40]
     sid, oid = int(subject_id), int(object_id)
     if not predicate or sid == oid:
         return False
+    conf = max(1, min(10, int(confidence)))
+    if playful:
+        conf = min(conf, 3)
     con = _connect()
     try:
         exists = con.execute(
@@ -277,24 +282,29 @@ def add_relation_by_ids(
         if exists:
             # Same triple seen again: merge any newly-observed validity bounds
             # into EVERY duplicate row of the triple (historical dedup leaves
-            # a few behind), without clobbering known ones.
+            # a few behind), without clobbering known ones. Playfulness is
+            # sticky AND retroactive: flagging a joke also caps the stored
+            # confidence so old high scores can't keep ranking it as fact.
             con.execute(
-                "UPDATE relations SET valid_from=coalesce(?, valid_from), valid_to=coalesce(?, valid_to) "
+                "UPDATE relations SET valid_from=coalesce(?, valid_from), valid_to=coalesce(?, valid_to), "
+                "is_playful=CASE WHEN ? THEN 1 ELSE is_playful END, "
+                "confidence=CASE WHEN ? THEN min(confidence,3) ELSE confidence END "
                 "WHERE subject_id=? AND predicate=? AND object_id=?",
-                (valid_from or None, valid_to or None, sid, predicate, oid),
+                (valid_from or None, valid_to or None, int(bool(playful)), int(bool(playful)), sid, predicate, oid),
             )
             con.commit()
             return True
         con.execute(
-            "INSERT INTO relations (subject_id, predicate, object_id, confidence, valid_from, valid_to) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO relations (subject_id, predicate, object_id, confidence, valid_from, valid_to, is_playful) "
+            "VALUES (?,?,?,?,?,?,?)",
             (
                 sid,
                 predicate,
                 oid,
-                max(1, min(10, int(confidence))),
+                conf,
                 (valid_from or None),
                 (valid_to or None),
+                int(bool(playful)),
             ),
         )
         con.commit()
@@ -311,9 +321,13 @@ def add_relation(
     confidence: int = 1,
     valid_from: str | None = None,
     valid_to: str | None = None,
+    playful: bool = False,
 ) -> None:
     subject_id = upsert_entity(subject)
     object_id = upsert_entity(obj)
+    conf = max(1, min(10, int(confidence)))
+    if playful:
+        conf = min(conf, 3)
     con = _connect()
     try:
         exists = con.execute(
@@ -322,25 +336,29 @@ def add_relation(
         ).fetchone()
         if exists:
             # Merge newly-observed validity bounds into every duplicate row
-            # of the triple, without clobbering known ones.
+            # of the triple, without clobbering known ones. Playfulness is
+            # sticky AND retroactive: flagging a joke also caps confidence.
             con.execute(
-                "UPDATE relations SET valid_from=coalesce(?, valid_from), valid_to=coalesce(?, valid_to) "
+                "UPDATE relations SET valid_from=coalesce(?, valid_from), valid_to=coalesce(?, valid_to), "
+                "is_playful=CASE WHEN ? THEN 1 ELSE is_playful END, "
+                "confidence=CASE WHEN ? THEN min(confidence,3) ELSE confidence END "
                 "WHERE subject_id=? AND predicate=? AND object_id=?",
-                (valid_from or None, valid_to or None, subject_id, predicate, object_id),
+                (valid_from or None, valid_to or None, int(bool(playful)), int(bool(playful)), subject_id, predicate, object_id),
             )
             con.commit()
             return
         con.execute(
-            "INSERT INTO relations (subject_id, predicate, object_id, source_chunk_id, confidence, valid_from, valid_to) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO relations (subject_id, predicate, object_id, source_chunk_id, confidence, valid_from, valid_to, is_playful) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (
                 subject_id,
                 predicate,
                 object_id,
                 chunk_id,
-                confidence,
+                conf,
                 (valid_from or None),
                 (valid_to or None),
+                int(bool(playful)),
             ),
         )
         con.commit()

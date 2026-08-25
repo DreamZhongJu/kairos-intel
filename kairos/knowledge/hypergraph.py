@@ -74,6 +74,7 @@ SELECT r1.subject_id AS s, r1.predicate AS p1, r1.object_id AS m,
        r2.predicate AS p2, r2.object_id AS o,
        r1.valid_from AS v1s, r1.valid_to AS v1e,
        r2.valid_from AS v2s, r2.valid_to AS v2e,
+       r1.is_playful AS j1, r2.is_playful AS j2,
        e1.name AS sn, e1.type AS st, e1.canonical AS sc,
        e2.name AS mn, e2.type AS mt, e2.canonical AS mc,
        e3.name AS oname, e3.type AS ot, e3.canonical AS oc
@@ -128,6 +129,9 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
         chain_until = min(until_parts) if until_parts else None
         if chain_since and chain_until and chain_until < chain_since:
             continue  # hops contradict each other in time — not a stable chain
+        # Tone: any playful hop marks the whole chain as banter (Zep-style
+        # fact flagging) — halve confidence so jokes never outrank facts.
+        playful = bool(row["j1"] or row["j2"])
         chains[hid] = {
             "id": hid,
             "entity_ids": [int(row["s"]), int(row["m"]), int(row["o"])],
@@ -137,10 +141,11 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
             "predicates": [p1, p2],
             "start_id": int(row["s"]),
             "end_id": int(row["o"]),
-            "confidence": conf,
+            "confidence": round(conf * (0.5 if playful else 1.0), 4),
             "signature": sig,
             "since": chain_since,
             "until": chain_until,
+            "playful": playful,
         }
     out = sorted(chains.values(), key=lambda c: -c["confidence"])
     return out[:limit] if limit else out
@@ -181,15 +186,17 @@ def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
         ON CREATE SET h.predicates=$preds, h.names=$names, h.types=$types,
             h.entity_ids=$eids, h.start_id=$sid, h.end_id=$oid,
             h.confidence=$conf, h.n_pos=1, h.source=$src, h.created_at=$now,
-            h.signature=$sig, h.since=$since, h.until=$until
+            h.signature=$sig, h.since=$since, h.until=$until, h.playful=$playful
         ON MATCH SET h.n_pos = coalesce(h.n_pos,1)+1,
             h.since=coalesce(h.since,$since),
-            h.until=coalesce(h.until,$until)
+            h.until=coalesce(h.until,$until),
+            h.playful = CASE WHEN $playful THEN true ELSE coalesce(h.playful, false) END
         """,
         id=c["id"], preds=c["predicates"], names=c["names"], types=c["types"],
         eids=c["entity_ids"], sid=c["start_id"], oid=c["end_id"],
         conf=c["confidence"], src=source, sig=c["signature"],
         since=c.get("since"), until=c.get("until"),
+        playful=bool(c.get("playful")),
         now=time.strftime("%Y-%m-%d %H:%M:%S"),
     )
     for i, eid in enumerate(c["entity_ids"]):
@@ -242,6 +249,7 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
             RETURN h.id AS hid, h.names AS names, h.types AS types,
                    h.predicates AS preds, h.confidence AS conf,
                    h.since AS since, h.until AS until,
+                   coalesce(h.playful, false) AS playful,
                    collect(e.id) AS member_ids
             """,
             seed_ids=seed_ids, nbr_ids=nbr_ids,
@@ -264,6 +272,7 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
             "names": r["names"], "types": r["types"], "predicates": r["preds"],
             "confidence": conf, "direct": direct, "neighbor": neighbor,
             "since": r.get("since"), "until": until, "expired": expired,
+            "playful": bool(r.get("playful")),
             "score": round(score, 4),
             "chain": " -> ".join(
                 f"{r['names'][i]} --[{r['preds'][i]}]--> {r['names'][i + 1]}"
