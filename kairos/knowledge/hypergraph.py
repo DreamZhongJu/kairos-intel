@@ -415,10 +415,7 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
             "since": r.get("since"), "until": until, "expired": expired,
             "playful": bool(r.get("playful")),
             "score": round(score, 4),
-            "chain": " -> ".join(
-                f"{r['names'][i]} --[{r['preds'][i]}]--> {r['names'][i + 1]}"
-                for i in range(len(r["preds"]))
-            ) if r.get("preds") else "",
+            "chain": chain,
         })
     scored.sort(key=lambda x: -x["score"])
     hits = [{k: v for k, v in h.items() if not k.startswith("_")} for h in scored[:top_m]]
