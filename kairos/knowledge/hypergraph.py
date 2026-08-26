@@ -53,6 +53,14 @@ def _pscore(pred: str) -> float:
     return 0.25  # unknown predicate — mild credit
 
 
+# Only whitelisted predicates may appear in a mined chain, and only strong
+# entity types may act as the middle anchor. This kills the "X 辱骂 Y 学习
+# C语言" class of pseudo-inference where two unrelated facts are glued by a
+# person node and an interaction verb.
+_ANCHOR_TYPES = {"机构", "地点", "事件", "产品", "项目", "技术", "会议", "领域", "作品"}
+_MINABLE_PREDS = STRONG_KNOWLEDGE | EVENT
+
+
 def _type_diversity(types: list[str]) -> float:
     return len(set(types)) / max(1, len(types))
 
@@ -68,6 +76,8 @@ def chain_confidence(p1: str, p2: str, mid_degree: int, types: list[str]) -> flo
 # --- offline: mine chains from SQLite ----------------------------------------
 
 _NOISE_SQL = ",".join(f"'{p}'" for p in NOISE)
+_MINABLE_SQL = ",".join(f"'{p}'" for p in _MINABLE_PREDS)
+_ANCHOR_SQL = ",".join(f"'{t}'" for t in _ANCHOR_TYPES)
 
 _MINING_SQL = f"""
 SELECT r1.subject_id AS s, r1.predicate AS p1, r1.object_id AS m,
@@ -83,8 +93,9 @@ JOIN relations r2 ON r1.object_id = r2.subject_id
 JOIN entities e1 ON e1.id = r1.subject_id
 JOIN entities e2 ON e2.id = r1.object_id
 JOIN entities e3 ON e3.id = r2.object_id
-WHERE r1.predicate NOT IN ({_NOISE_SQL})
-  AND r2.predicate NOT IN ({_NOISE_SQL})
+WHERE r1.predicate IN ({_MINABLE_SQL})
+  AND r2.predicate IN ({_MINABLE_SQL})
+  AND e2.type IN ({_ANCHOR_SQL})
   AND e2.canonical NOT LIKE 'group:%'
   AND r1.subject_id != r2.object_id
 """
@@ -120,6 +131,7 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
         sig = f"{row['sc']}|{p1}|{row['mc']}|{p2}|{row['oc']}"
         hid = hashlib.sha1(sig.encode()).hexdigest()[:16]
         if hid in chains:
+            chains[hid]["n_evidence"] += 1
             continue
         # Chain validity interval = intersection of the two hops' intervals
         # (Zep-style t_valid). Empty bounds mean open-ended.
@@ -146,6 +158,9 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
             "since": chain_since,
             "until": chain_until,
             "playful": playful,
+            # how many distinct relation edges back this exact chain — real
+            # evidence weight, unlike the old n_pos that merely counted re-mines
+            "n_evidence": 1,
         }
     out = sorted(chains.values(), key=lambda c: -c["confidence"])
     return out[:limit] if limit else out
@@ -180,14 +195,17 @@ def save_hyper_edges(chains: list[dict[str, Any]], source: str = "chain_mining")
 
 
 def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
+    nev = int(c.get("n_evidence", 1))
     tx.run(
         """
         MERGE (h:HyperEdge {id: $id})
         ON CREATE SET h.predicates=$preds, h.names=$names, h.types=$types,
             h.entity_ids=$eids, h.start_id=$sid, h.end_id=$oid,
-            h.confidence=$conf, h.n_pos=1, h.source=$src, h.created_at=$now,
+            h.confidence=$conf, h.n_pos=$nev, h.n_evidence=$nev,
+            h.source=$src, h.created_at=$now,
             h.signature=$sig, h.since=$since, h.until=$until, h.playful=$playful
-        ON MATCH SET h.n_pos = coalesce(h.n_pos,1)+1,
+        ON MATCH SET h.n_evidence=$nev,
+            h.confidence=$conf,
             h.since=coalesce(h.since,$since),
             h.until=coalesce(h.until,$until),
             h.playful = CASE WHEN $playful THEN true ELSE coalesce(h.playful, false) END
@@ -198,6 +216,7 @@ def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
         since=c.get("since"), until=c.get("until"),
         playful=bool(c.get("playful")),
         now=time.strftime("%Y-%m-%d %H:%M:%S"),
+        nev=nev,
     )
     for i, eid in enumerate(c["entity_ids"]):
         tx.run(
