@@ -84,8 +84,11 @@ def _mine_run() -> None:
         with graph_store._driver().session() as s:
             s.run("CREATE CONSTRAINT hedge_id IF NOT EXISTS FOR (h:HyperEdge) REQUIRE h.id IS UNIQUE")
         chains = hypergraph.mine_chains(min_confidence=0.45)
+        stars = hypergraph.mine_event_stars()
         if chains:
             hypergraph.save_hyper_edges(chains, source="auto_resync")
+        if stars:
+            hypergraph.save_hyper_edges(stars, source="event_star_resync")
     except Exception:  # noqa: BLE001  — mining failures must not break ingest
         pass
 

@@ -166,6 +166,111 @@ def mine_chains(min_confidence: float = 0.45, limit: int | None = None) -> list[
     return out[:limit] if limit else out
 
 
+# --- offline: mine event-star (true n-ary) hyperedges -------------------------
+
+# Participant predicates for event stars: same whitelist as chains keeps the
+# discipline — interaction verbs (提及/艾特/辱骂…) never make a participation.
+_EVENT_STAR_SQL = f"""
+SELECT c.id AS cid, c.name AS cname, c.canonical AS cc,
+       r.predicate AS p, r.is_playful AS j,
+       r.valid_from AS vf, r.valid_to AS vt,
+       e.id AS pid, e.name AS pname, e.type AS ptype, e.canonical AS pc
+FROM entities c
+JOIN relations r ON r.subject_id = c.id OR r.object_id = c.id
+JOIN entities e ON e.id = CASE WHEN r.subject_id = c.id
+                               THEN r.object_id ELSE r.subject_id END
+WHERE c.type = '\u4e8b\u4ef6'
+  AND c.canonical NOT LIKE 'group:%'
+  AND e.type = '\u4eba\u540d'
+  AND e.canonical NOT LIKE 'group:%'
+  AND r.predicate IN ({_MINABLE_SQL})
+"""
+
+
+def mine_event_stars(min_participants: int = 3, max_participants: int = 12) -> list[dict[str, Any]]:
+    """True n-ary hyperedges: one event center, many person participants.
+
+    A center qualifies when >= min_participants *distinct* persons connect to
+    it through whitelisted predicates. This is what two-hop chains cannot
+    express — group activities like a KFC dinner or a New-Year party link
+    several people at once, and materializing them is the whole point of a
+    hypergraph over a plain graph.
+    """
+    from kairos.knowledge import engine
+
+    engine.init()
+    con = engine._connect()
+    try:
+        rows = con.execute(_EVENT_STAR_SQL).fetchall()
+    finally:
+        con.close()
+
+    centers: dict[int, dict[int, dict[str, Any]]] = {}
+    meta: dict[int, tuple[str, str]] = {}
+    for row in rows:
+        cid = int(row["cid"])
+        meta[cid] = (row["cname"], row["cc"])
+        centers.setdefault(cid, {})
+        part = centers[cid]
+        pid = int(row["pid"])
+        cur = part.get(pid)
+        if cur is None or _pscore(row["p"]) > _pscore(cur["p"]):
+            part[pid] = {
+                "p": row["p"], "j": bool(row["j"]),
+                "vf": row["vf"], "vt": row["vt"],
+                "pname": row["pname"], "ptype": row["ptype"],
+            }
+        else:
+            # keep widest time window across duplicate participant edges
+            if row["vf"] and (not cur["vf"] or row["vf"] < cur["vf"]):
+                cur["vf"] = row["vf"]
+            if row["vt"] and (not cur["vt"] or row["vt"] > cur["vt"]):
+                cur["vt"] = row["vt"]
+
+    stars: dict[str, dict[str, Any]] = {}
+    for cid, parts in centers.items():
+        persons = {pid: info for pid, info in parts.items()}
+        if len(persons) < min_participants:
+            continue
+        ordered = sorted(
+            persons.items(),
+            key=lambda kv: (-_pscore(kv[1]["p"]), kv[0]),
+        )[:max_participants]
+        cname, cc = meta[cid]
+        preds = [info["p"] for _, info in ordered]
+        names = [cname] + [info["pname"] for _, info in ordered]
+        types = ["\u4e8b\u4ef6"] + [info["ptype"] for _, info in ordered]
+        playful = any(info["j"] for info in persons.values())
+        since_parts = [i["vf"] for i in persons.values() if i["vf"]]
+        until_parts = [i["vt"] for i in persons.values() if i["vt"]]
+        avg_score = sum(_pscore(p) for p in preds) / len(preds)
+        breadth = min(len(persons), 10) / 10.0
+        tanchor = 1.0 if (since_parts or until_parts) else 0.6
+        conf = round(max(0.0, min(1.0, 0.45 * avg_score + 0.35 * breadth + 0.20 * tanchor))
+                     * (0.5 if playful else 1.0), 4)
+        sig = "star|" + cc + "|" + ",".join(str(pid) for pid, _ in sorted(ordered))
+        hid = hashlib.sha1(sig.encode()).hexdigest()[:16]
+        stars[hid] = {
+            "id": hid,
+            "kind": "event_star",
+            "entity_ids": [cid] + [pid for pid, _ in ordered],
+            "names": names,
+            "types": types,
+            "canonicals": [cc] + [info.get("pc", "") for _, info in ordered],  # noqa: FURB
+            "predicates": preds,
+            "start_id": cid,
+            "end_id": cid,
+            "confidence": conf,
+            "signature": sig,
+            "since": max(since_parts) if since_parts else None,
+            "until": min(until_parts) if until_parts else None,
+            "playful": playful,
+            "n_evidence": len(parts),
+        }
+    out = sorted(stars.values(), key=lambda s: -s["confidence"])
+    return out
+
+
 # --- persistence into Neo4j ---------------------------------------------------
 
 def save_hyper_edges(chains: list[dict[str, Any]], source: str = "chain_mining") -> int:
@@ -196,16 +301,17 @@ def save_hyper_edges(chains: list[dict[str, Any]], source: str = "chain_mining")
 
 def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
     nev = int(c.get("n_evidence", 1))
+    kind = c.get("kind", "chain")
     tx.run(
         """
         MERGE (h:HyperEdge {id: $id})
         ON CREATE SET h.predicates=$preds, h.names=$names, h.types=$types,
             h.entity_ids=$eids, h.start_id=$sid, h.end_id=$oid,
             h.confidence=$conf, h.n_pos=$nev, h.n_evidence=$nev,
-            h.source=$src, h.created_at=$now,
+            h.source=$src, h.created_at=$now, h.kind=$kind,
             h.signature=$sig, h.since=$since, h.until=$until, h.playful=$playful
         ON MATCH SET h.n_evidence=$nev,
-            h.confidence=$conf,
+            h.confidence=$conf, h.kind=$kind,
             h.since=coalesce(h.since,$since),
             h.until=coalesce(h.until,$until),
             h.playful = CASE WHEN $playful THEN true ELSE coalesce(h.playful, false) END
@@ -217,6 +323,7 @@ def _upsert_one(tx, c: dict[str, Any], source: str) -> None:
         playful=bool(c.get("playful")),
         now=time.strftime("%Y-%m-%d %H:%M:%S"),
         nev=nev,
+        kind=kind,
     )
     for i, eid in enumerate(c["entity_ids"]):
         tx.run(
@@ -267,7 +374,7 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
             WHERE e.id IN $seed_ids OR e.id IN $nbr_ids
             RETURN h.id AS hid, h.names AS names, h.types AS types,
                    h.predicates AS preds, h.confidence AS conf,
-                   h.since AS since, h.until AS until,
+                   h.since AS since, h.until AS until, h.kind AS kind,
                    coalesce(h.playful, false) AS playful,
                    collect(e.id) AS member_ids
             """,
@@ -287,7 +394,22 @@ def retrieve(query_entities: list[str], top_m: int = 8) -> dict[str, Any]:
         score = (direct * 0.7 + min(neighbor, 2) * 0.3) * eff_conf
         if direct == 0:
             score *= 0.5  # neighbor-only chains must not outrank direct hits
+        kind = r.get("kind") or "chain"
+        if kind == "event_star" and r.get("names"):
+            center = r["names"][0]
+            spokes = [
+                f"{r['names'][i + 1]} --[{r['preds'][i]}]--> {center}"
+                for i in range(len(r["preds"] or []))
+                if i + 1 < len(r["names"])
+            ]
+            chain = f"({len(spokes)}-ary) " + "; ".join(spokes[:4]) + ("; …" if len(spokes) > 4 else "")
+        else:
+            chain = " -> ".join(
+                f"{r['names'][i]} --[{r['preds'][i]}]--> {r['names'][i + 1]}"
+                for i in range(len(r["preds"]))
+            ) if r.get("preds") else ""
         scored.append({
+            "kind": kind,
             "names": r["names"], "types": r["types"], "predicates": r["preds"],
             "confidence": conf, "direct": direct, "neighbor": neighbor,
             "since": r.get("since"), "until": until, "expired": expired,
